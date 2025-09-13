@@ -1,7 +1,7 @@
 import csv
 
 import numpy as np
-from HybridSuperQubits import BBQ
+from circuit import Circuit
 
 from transition_fitter import TransitionFitter
 
@@ -88,7 +88,7 @@ class CircuitFitter:
         phase_ext *= self.x_scale
         Ej, frequencies, phase_zpf = self._convert_params_to_lists(params)
 
-        bbq = BBQ(
+        circuit = Circuit(
             frequencies=frequencies,
             phase_zpf=phase_zpf,
             dimensions=self.dimensions,
@@ -97,7 +97,7 @@ class CircuitFitter:
             use_bogoliubov=self.use_bogoliubov,
         )
 
-        evals, _ = bbq.eigensystem(truncation=self.truncation, phase_ext=phase_ext)
+        evals, _ = circuit.eigensystem(truncation=self.truncation, phase_ext=phase_ext)
         return evals
 
     def _params_initial(self):
@@ -150,7 +150,7 @@ class CircuitFitter:
 
     def save_results_csv(self, filepath: str):
         """
-        Save BBQ fit results to a CSV file with both raw parameters and physical values.
+        Save circuit fit results to a CSV file with both raw parameters and physical values.
 
         Args:
             filepath (str): Path where to save the CSV file
@@ -162,7 +162,7 @@ class CircuitFitter:
         fitted_params = self.transition_fitter.result.x
         Ej, frequencies, phase_zpf = self._convert_params_to_lists(fitted_params)
 
-        bbq = BBQ(
+        circuit = Circuit(
             frequencies=frequencies,
             phase_zpf=phase_zpf,
             dimensions=self.dimensions,
@@ -175,7 +175,7 @@ class CircuitFitter:
             writer = csv.writer(csvfile)
 
             # Write header with fit information
-            writer.writerow(["# BBQ Fit Results"])
+            writer.writerow(["# circuit Fit Results"])
             writer.writerow(["# Timestamp:", f"{np.datetime64('now')}"])
             writer.writerow(["# Cost:", str(self.transition_fitter.result.cost)])
             writer.writerow(["# Optimizer:", self.transition_fitter.optimizer])
@@ -201,15 +201,15 @@ class CircuitFitter:
             writer.writerow(["# Physical Parameters"])
             writer.writerow(["parameter", "value", "unit"])
             writer.writerow(["Ej", Ej, "GHz"])
-            writer.writerow(["collective_frequency", bbq.collective_frequency, "GHz"])
-            writer.writerow(["non_linear_frequency", bbq.non_linear_frequency, "GHz"])
-            writer.writerow(["non_linear_phase_zpf", bbq.non_linear_phase_zpf, "rad"])
-            for i in range(bbq.modes - 1):
+            writer.writerow(["collective_frequency", circuit.collective_frequency, "GHz"])
+            writer.writerow(["non_linear_frequency", circuit.non_linear_frequency, "GHz"])
+            writer.writerow(["non_linear_phase_zpf", circuit.non_linear_phase_zpf, "rad"])
+            for i in range(circuit.modes - 1):
                 writer.writerow(
-                    [f"linear_frequency_{i}", bbq.linear_frequencies[i], "GHz"]
+                    [f"linear_frequency_{i}", circuit.linear_frequencies[i], "GHz"]
                 )
-            for i in range(bbq.modes - 1):
-                writer.writerow([f"linear_coupling_{i}", bbq.linear_coupling[i], "GHz"])
+            for i in range(circuit.modes - 1):
+                writer.writerow([f"linear_coupling_{i}", circuit.linear_coupling[i], "GHz"])
 
             # Write configuration parameters
             writer.writerow(["# Configuration"])
@@ -257,11 +257,11 @@ class CircuitFitter:
                         ]
                     )
 
-        print(f"BBQ fit results saved to: {filepath}")
+        print(f"circuit fit results saved to: {filepath}")
 
     def save_complete_result(self, filepath: str):
         """
-        Save complete BBQ fit results including the full optimization result object.
+        Save complete circuit fit results including the full optimization result object.
 
         Delegates to TransitionFitter and saves additional CSV for readability.
 
@@ -281,28 +281,28 @@ class CircuitFitter:
         self.save_results_csv(str(csv_path))
 
         print(f"Additional CSV file saved: {csv_path}")
-        print("Use get_analysis_report() for BBQ-specific parameters.")
+        print("Use get_analysis_report() for circuit-specific parameters.")
 
     @classmethod
     def load_complete_result(cls, filepath: str):
         """
-        Load complete BBQ fit results from a pickle file.
+        Load complete circuit fit results from a pickle file.
 
-        Note: This loads a TransitionFitter and wraps it in a Fit_BBQ instance.
-        The original BBQ configuration must be reconstructed from the fit data.
+        Note: This loads a TransitionFitter and wraps it in a Fit_circuit instance.
+        The original circuit configuration must be reconstructed from the fit data.
 
         Args:
             filepath (str): Path to the pickle file
 
         Returns:
-            Fit_BBQ: New instance with the complete loaded result
+            Fit_circuit: New instance with the complete loaded result
         """
         # Load the TransitionFitter
         loaded_transition_fitter = TransitionFitter.load_complete_result(filepath)
 
-        # We need to reconstruct BBQ configuration from the fit parameters
-        # This is a limitation - we don't have the original BBQ config
-        print("Warning: BBQ configuration reconstructed from fit parameters.")
+        # We need to reconstruct circuit configuration from the fit parameters
+        # This is a limitation - we don't have the original circuit config
+        print("Warning: circuit configuration reconstructed from fit parameters.")
         print("Some original settings (bounds, truncation) may not be preserved.")
 
         # Extract basic info from the loaded fitter
@@ -324,7 +324,7 @@ class CircuitFitter:
         # Replace with the loaded transition_fitter
         new_fitter.transition_fitter = loaded_transition_fitter
 
-        print("BBQ fitter loaded with reconstructed configuration.")
+        print("circuit fitter loaded with reconstructed configuration.")
         print("Please verify initial parameters match your original setup.")
 
         return new_fitter
@@ -337,7 +337,7 @@ class CircuitFitter:
         analysis including parameter uncertainties, convergence analysis, etc.
 
         Returns:
-            dict: Complete analysis report from TransitionFitter with BBQ parameters
+            dict: Complete analysis report from TransitionFitter with circuit parameters
         """
         if self.transition_fitter.result is None:
             raise RuntimeError("No fit has been run yet. Call fit() first.")
@@ -345,11 +345,11 @@ class CircuitFitter:
         # Get comprehensive report from TransitionFitter
         report = self.transition_fitter.get_comprehensive_report()
 
-        # Add BBQ-specific information
+        # Add circuit-specific information
         fitted_params = self.transition_fitter.result.x
         Ej, frequencies, phase_zpf = self._convert_params_to_lists(fitted_params)
 
-        bbq = BBQ(
+        circuit = Circuit(
             frequencies=frequencies,
             phase_zpf=phase_zpf,
             dimensions=self.dimensions,
@@ -358,16 +358,16 @@ class CircuitFitter:
             use_bogoliubov=self.use_bogoliubov,
         )
 
-        report["bbq_parameters"] = {
+        report["circuit_parameters"] = {
             "Ej": float(Ej),
-            "collective_frequency": float(bbq.collective_frequency),
-            "non_linear_frequency": float(bbq.non_linear_frequency),
-            "non_linear_phase_zpf": float(bbq.non_linear_phase_zpf),
-            "linear_frequencies": [float(f) for f in bbq.linear_frequencies]
-            if bbq.modes > 1
+            "collective_frequency": float(circuit.collective_frequency),
+            "non_linear_frequency": float(circuit.non_linear_frequency),
+            "non_linear_phase_zpf": float(circuit.non_linear_phase_zpf),
+            "linear_frequencies": [float(f) for f in circuit.linear_frequencies]
+            if circuit.modes > 1
             else [],
-            "linear_coupling": [float(c) for c in bbq.linear_coupling]
-            if bbq.modes > 1
+            "linear_coupling": [float(c) for c in circuit.linear_coupling]
+            if circuit.modes > 1
             else [],
             "modes": self.modes,
             "truncation": self.truncation,
@@ -380,9 +380,9 @@ class CircuitFitter:
         self, show_transitions: bool = True, show_outliers: bool = True
     ):
         """
-        Print formatted analysis summary including BBQ-specific parameters.
+        Print formatted analysis summary including circuit-specific parameters.
 
-        This delegates to TransitionFitter's print_fit_summary and adds BBQ info.
+        This delegates to TransitionFitter's print_fit_summary and adds circuit info.
 
         Args:
             show_transitions (bool): Whether to show individual transition analysis
@@ -394,11 +394,11 @@ class CircuitFitter:
         # Print TransitionFitter summary
         self.transition_fitter.print_fit_summary(show_transitions, show_outliers)
 
-        # Add BBQ-specific information
+        # Add circuit-specific information
         fitted_params = self.transition_fitter.result.x
         Ej, frequencies, phase_zpf = self._convert_params_to_lists(fitted_params)
 
-        bbq = BBQ(
+        circuit = Circuit(
             frequencies=frequencies,
             phase_zpf=phase_zpf,
             dimensions=self.dimensions,
@@ -407,15 +407,15 @@ class CircuitFitter:
             use_bogoliubov=self.use_bogoliubov,
         )
 
-        print("\nBBQ PARAMETERS:")
+        print("\ncircuit PARAMETERS:")
         print(f"  Ej = {Ej:.4f} GHz")
-        print(f"  Collective frequency = {bbq.collective_frequency:.4f} GHz")
-        print(f"  Non-linear frequency = {bbq.non_linear_frequency:.4f} GHz")
-        print(f"  Non-linear phase ZPF = {bbq.non_linear_phase_zpf:.4f} rad")
+        print(f"  Collective frequency = {circuit.collective_frequency:.4f} GHz")
+        print(f"  Non-linear frequency = {circuit.non_linear_frequency:.4f} GHz")
+        print(f"  Non-linear phase ZPF = {circuit.non_linear_phase_zpf:.4f} rad")
 
-        if bbq.modes > 1:
+        if circuit.modes > 1:
             for i, (freq, coupling) in enumerate(
-                zip(bbq.linear_frequencies, bbq.linear_coupling)
+                zip(circuit.linear_frequencies, circuit.linear_coupling)
             ):
                 print(
                     f"  Linear mode {i}: {freq:.4f} GHz (coupling: {coupling:.4f} GHz)"
@@ -447,13 +447,13 @@ class CircuitFitter:
         return self.transition_fitter.get_transition_analysis()
 
     def get_comprehensive_report(self):
-        """Get comprehensive report with BBQ parameters. Same as get_analysis_report()."""
+        """Get comprehensive report with circuit parameters. Same as get_analysis_report()."""
         return self.get_analysis_report()
 
     def print_fit_summary(
         self, show_transitions: bool = True, show_outliers: bool = True
     ):
-        """Print fit summary with BBQ parameters. Same as print_analysis_summary()."""
+        """Print fit summary with circuit parameters. Same as print_analysis_summary()."""
         return self.print_analysis_summary(show_transitions, show_outliers)
 
     def fit_multistart(self, *args, **kwargs):
@@ -463,7 +463,7 @@ class CircuitFitter:
     @classmethod
     def load_results_csv(cls, filepath: str):
         """
-        Load BBQ fit results from a CSV file and return a dictionary with all information.
+        Load circuit fit results from a CSV file and return a dictionary with all information.
 
         Args:
             filepath (str): Path to the CSV file
@@ -533,12 +533,12 @@ class CircuitFitter:
                     except ValueError:
                         pass
 
-        print(f"BBQ fit results loaded from: {filepath}")
+        print(f"circuit fit results loaded from: {filepath}")
         return results
 
     def create_from_csv(self, filepath: str, transitions_data: dict = None):
         """
-        Create a new Fit_BBQ instance using parameters loaded from a CSV file.
+        Create a new Fit_circuit instance using parameters loaded from a CSV file.
 
         NOTE: This method loads only basic parameter information from CSV.
         For complete analysis capabilities (including parameter uncertainties,
@@ -549,7 +549,7 @@ class CircuitFitter:
             transitions_data (dict, optional): New transition data. If None, uses data from CSV.
 
         Returns:
-            Fit_BBQ: New instance with loaded parameters as initial values
+            Fit_circuit: New instance with loaded parameters as initial values
         """
         loaded_results = self.load_results_csv(filepath)
 

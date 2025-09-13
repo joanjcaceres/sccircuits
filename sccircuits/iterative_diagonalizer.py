@@ -468,7 +468,14 @@ class IterativeHamiltonianDiagonalizer:
 if __name__ == "__main__":
     # Example usage with sequential coupling (replace with your own operator constructors)
 
-    from HybridSuperQubits.operators import creation, destroy
+    def destroy(dimension: int) -> np.ndarray:
+        indices = np.arange(1, dimension)
+        data = np.sqrt(indices)
+        return np.diag(data, k=1)
+
+
+    def creation(dimension: int) -> np.ndarray:
+        return destroy(dimension).T.conj()
 
     # Settings
     num_keep = 20
