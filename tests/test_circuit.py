@@ -4,9 +4,6 @@ Basic tests for Circuit class.
 
 import pytest
 import numpy as np
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from sccircuits import Circuit
 
@@ -46,7 +43,7 @@ class TestCircuit:
         # Negative phase_zpf  
         with pytest.raises(ValueError, match="must be positive"):
             Circuit([5.0], [-0.1], [50], 1.0)
-    
+        # Negative phase_zpf
     def test_hamiltonian_construction(self):
         """Test Hamiltonian matrix construction."""
         circuit = Circuit([5.0], [0.1], [10], 1.0)
