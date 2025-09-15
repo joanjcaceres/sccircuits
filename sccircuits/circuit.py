@@ -34,7 +34,7 @@ class Circuit:
         Gamma: Optional[float] = None,
         epsilon_r: Optional[float] = None,
         phase_ext: Optional[float] = 0,
-        use_bogoliubov: Optional[bool] = True,
+        use_bogoliubov: Optional[bool] = False,
     ):
         """
         Initializes a Circuit object for superconducting circuit analysis.
@@ -60,9 +60,8 @@ class Circuit:
         phase_ext : float, optional
             External flux phase in radians, default is 0.
         use_bogoliubov : bool, optional
-            If True, applies Bogoliubov transformation to the collective mode
-            for enhanced numerical stability. If False, uses original parameters
-            without transformation. Default is True.
+            If True, applies Bogoliubov transformation to the collective mode.
+            If False, uses original parameters without transformation. Default is False.
             
         Raises
         ------
