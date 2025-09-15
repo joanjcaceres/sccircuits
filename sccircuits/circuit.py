@@ -164,8 +164,11 @@ class Circuit:
         hamiltonian -= self.Ej * cos_full_op
 
         if return_coupling_ops:
-            # Calculate coupling operators only when needed
-            cos_half_op = cosm(phi_op / 2)  # For fermionic coupling (no phase_ext)
+            # Calculate cos_half_op only when fermionic coupling is enabled
+            if self.has_fermionic_coupling:
+                cos_half_op = cosm(phi_op / 2)  # For fermionic coupling (no phase_ext)
+            else:
+                cos_half_op = None  # Not needed for purely bosonic systems
             
             # Calculate collective creation operator here to avoid duplication
             if self.use_bogoliubov:
