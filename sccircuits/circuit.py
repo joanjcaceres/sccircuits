@@ -8,6 +8,10 @@ from .utilities import lanczos_krylov
 from .iterative_diagonalizer import IterativeHamiltonianDiagonalizer
 
 
+def _to_dense_if_sparse(matrix):
+    """Convert a sparse matrix to dense if necessary."""
+    return matrix.toarray() if hasattr(matrix, 'toarray') else matrix
+
 class Circuit:
     def __init__(
         self,
@@ -78,7 +82,7 @@ class Circuit:
         
         # Validate fermionic coupling parameters
         self.has_fermionic_coupling = (Gamma is not None and epsilon_r is not None)
-        if (Gamma is None) != (epsilon_r is None):  # XOR - only one is None
+        if (Gamma is None and epsilon_r is not None) or (Gamma is not None and epsilon_r is None):
             raise ValueError("Both Gamma and epsilon_r must be provided together for fermionic coupling, or both should be None.")
 
         self.non_linear_phase_zpf = np.linalg.norm(self.phase_zpf)
@@ -140,10 +144,11 @@ class Circuit:
         data = np.sqrt(np.arange(1, dimension_bosonic))
         phi_op = phi_zpf_0 * diags([data, data], [1, -1])
         
-        # Convert to dense for cosm operations
-        if hasattr(phi_op, 'toarray'):
-            phi_op = phi_op.toarray()
-
+        # Calculate the full cosine operator for the hamiltonian
+        phi_op_with_phase = phi_op.copy()
+        phi_op_with_phase[np.diag_indices_from(phi_op_with_phase)] += phase_ext
+        cos_full_op = cosm(phi_op_with_phase)
+        hamiltonian -= self.Ej * cos_full_op
         # Calculate the full cosine operator for the hamiltonian
         cos_full_op = cosm(phi_op + phase_ext * np.eye(dimension_bosonic))
         hamiltonian -= self.Ej * cos_full_op
@@ -202,8 +207,7 @@ class Circuit:
             a_plus_adag = diags([data, data], [1, -1])
             
             # Convert to dense array if sparse
-            if hasattr(a_plus_adag, 'toarray'):
-                a_plus_adag = a_plus_adag.toarray()
+            a_plus_adag = _to_dense_if_sparse(a_plus_adag)
             
             # Phase operator in original basis
             phi_op_half = phi_zpf_0 * a_plus_adag / 2
@@ -218,6 +222,10 @@ class Circuit:
         """
         Calculate the eigenvalues and eigenvectors of the total Circuit Hamiltonian
         using sequential coupling logic.
+        
+        The truncation parameter is handled adaptively by the IterativeHamiltonianDiagonalizer:
+        - It automatically adapts to the actual system dimensions at each step
+        - Works correctly with fermionic modes (2×2) and bosonic modes of any size
         """
         iterator = IterativeHamiltonianDiagonalizer(truncation)
         
@@ -227,39 +235,67 @@ class Circuit:
             H_fermion = self._fermionic_hamiltonian()  # 2x2 fermionic Hamiltonian
             
             # Fermionic coupling operator: c† for coupling to bosonic mode
-            c_dagger = np.array([[0, 0], [1, 0]], dtype=float)
+            fermionic_creation_op = np.array([[0, 0], [1, 0]], dtype=float)
             
             iterator.add_initial_mode(
                 H_fermion,
-                c_dagger,  # This will couple to the bosonic mode
+                fermionic_creation_op,  # This will couple to the bosonic mode
             )
             
             # Step 2: Add bosonic non-linear mode (coupled to fermion)
             # Get hamiltonian and coupling operators efficiently in one call
             if self.modes > 1:
-                hamiltonian_bosonic, cos_half_op, collective_creation_operator = self.hamiltonian_nl(phase_ext, return_coupling_ops=True)
+                hamiltonian_nl, cos_half_op, collective_creation_operator = self.hamiltonian_nl(phase_ext, return_coupling_ops=True)
                 next_coupling_op = collective_creation_operator  # For coupling to next bosonic mode
             else:
-                hamiltonian_bosonic = self.hamiltonian_nl(phase_ext)
+                hamiltonian_nl = self.hamiltonian_nl(phase_ext)
                 # Still need cos_half_op for coupling to fermion
                 dimension_bosonic = self.dimensions[0]
                 data = np.sqrt(np.arange(1, dimension_bosonic))
                 phi_op = self.non_linear_phase_zpf * diags([data, data], [1, -1])
-                if hasattr(phi_op, 'toarray'):
-                    phi_op = phi_op.toarray()
+                phi_op = _to_dense_if_sparse(phi_op)
                 cos_half_op = cosm(phi_op / 2)
                 next_coupling_op = None
             
             iterator.add_mode(
-                hamiltonian_bosonic,
+                hamiltonian_nl,
                 cos_half_op,           # Couples to fermionic c†  
                 next_coupling_op,      # For next bosonic coupling
                 self.Gamma             # Coupling strength
             )
             
             # Step 3: Add remaining bosonic modes
-            start_bosonic_idx = 0  # Start from first linear mode
+            remaining_bosonic_modes = self.modes - 1
             
+            for idx in range(0, remaining_bosonic_modes):
+                frequency_k = self.linear_frequencies[idx]
+                diag_k = frequency_k * (np.arange(self.dimensions[idx + 1]) + 1 / 2)
+                hamiltonian_k = diags(diag_k, 0)
+                
+                # Convert to dense for compatibility
+                hamiltonian_k = _to_dense_if_sparse(hamiltonian_k)
+
+                # Current mode's coupling operator (couples to previous mode)
+                data = np.sqrt(np.arange(1, self.dimensions[idx + 1]))
+                linear_destroy_op_k = diags([data], [1], dtype=np.float64)
+                
+                # Convert to dense for compatibility
+                linear_destroy_op_k = _to_dense_if_sparse(linear_destroy_op_k)
+                
+                # Coupling operator for next mode (if this is not the last mode)
+                if idx < remaining_bosonic_modes - 1:  # Not the last bosonic mode
+                    coupling_operator_next = linear_destroy_op_k.T.copy()
+                else:
+                    coupling_operator_next = None
+                
+                # Add mode with sequential coupling
+                iterator.add_mode(
+                    hamiltonian_k, 
+                    linear_destroy_op_k,      # Couples to previous mode
+                    coupling_operator_next,   # Will couple to next mode (if any)
+                    self.linear_coupling[idx] # Coupling strength
+                )
+        
         else:
             # ORIGINAL ARCHITECTURE: Start with bosonic mode (no fermion)
             
@@ -276,33 +312,37 @@ class Circuit:
                 initial_coupling_op,
             )
             
-            start_bosonic_idx = 0  # Start from first linear mode
-        
-        # Add remaining bosonic modes (common for both architectures)
-        remaining_bosonic_modes = self.modes - 1
-        
-        for idx in range(start_bosonic_idx, remaining_bosonic_modes):
-            frequency_k = self.linear_frequencies[idx]
-            diag_k = frequency_k * (np.arange(self.dimensions[idx + 1]) + 1 / 2)
-            hamiltonian_k = diags(diag_k, 0)
+            # Add remaining bosonic modes (standard logic)
+            remaining_bosonic_modes = self.modes - 1
+            
+            for idx in range(0, remaining_bosonic_modes):
+                frequency_k = self.linear_frequencies[idx]
+                diag_k = frequency_k * (np.arange(self.dimensions[idx + 1]) + 1 / 2)
+                hamiltonian_k = diags(diag_k, 0)
+                
+                # Convert to dense for compatibility
+                hamiltonian_k = _to_dense_if_sparse(hamiltonian_k)
 
-            # Current mode's coupling operator (couples to previous mode)
-            data = np.sqrt(np.arange(1, self.dimensions[idx + 1]))
-            linear_destroy_op_k = diags([data], [1], dtype=np.float64)
-            
-            # Coupling operator for next mode (if this is not the last mode)
-            if idx < remaining_bosonic_modes - 1:  # Not the last bosonic mode
-                coupling_operator_next = linear_destroy_op_k.T.copy()
-            else:
-                coupling_operator_next = None
-            
-            # Add mode with sequential coupling
-            iterator.add_mode(
-                hamiltonian_k, 
-                linear_destroy_op_k,      # Couples to previous mode
-                coupling_operator_next,   # Will couple to next mode (if any)
-                self.linear_coupling[idx] # Coupling strength
-            )
+                # Current mode's coupling operator (couples to previous mode)
+                data = np.sqrt(np.arange(1, self.dimensions[idx + 1]))
+                linear_destroy_op_k = diags([data], [1], dtype=np.float64)
+                
+                # Convert to dense for compatibility
+                linear_destroy_op_k = _to_dense_if_sparse(linear_destroy_op_k)
+                
+                # Coupling operator for next mode (if this is not the last mode)
+                if idx < remaining_bosonic_modes - 1:  # Not the last bosonic mode
+                    coupling_operator_next = linear_destroy_op_k.T.copy()
+                else:
+                    coupling_operator_next = None
+                
+                # Add mode with sequential coupling
+                iterator.add_mode(
+                    hamiltonian_k, 
+                    linear_destroy_op_k,      # Couples to previous mode
+                    coupling_operator_next,   # Will couple to next mode (if any)
+                    self.linear_coupling[idx] # Coupling strength
+                )
 
         return iterator.energies, iterator.basis_vectors
 
