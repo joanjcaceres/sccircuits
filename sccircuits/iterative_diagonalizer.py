@@ -1,29 +1,6 @@
 import numpy as np
 from scipy import sparse
 from scipy.linalg import eigh
-from typing import Tuple
-
-
-def diagonalize_and_truncate(
-    hamiltonian: np.ndarray, num_states: int
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Diagonalize a Hermitian matrix (N ≲ 400) and keep only the lowest-energy eigenpairs.
-
-    Args:
-        hamiltonian (np.ndarray): Hermitian matrix of shape (N, N).
-        num_states    (int): Number of lowest eigenstates to retain.
-
-    Returns:
-        eigenvalues  (np.ndarray): Sorted lowest `num_states` eigenvalues, shape (num_states,).
-        eigenvectors (np.ndarray): Corresponding eigenvectors as columns, shape (N, num_states).
-    """
-    # Full diagonalization with LAPACK
-    all_evals, all_evecs = eigh(hamiltonian, subset_by_index=(0, num_states - 1))
-    # Pick the lowest num_states
-    # idx = np.argsort(all_evals)[:num_states]
-    return all_evals, all_evecs
-
 
 class IterativeHamiltonianDiagonalizer:
     """
@@ -74,23 +51,22 @@ class IterativeHamiltonianDiagonalizer:
 
 
     def add_initial_mode(
-        self, h0: np.ndarray, coupling_operator: np.ndarray = None
+        self, hamiltonian: np.ndarray, coupling_operator: np.ndarray = None
     ) -> None:
         """
         Diagonalize the first-mode Hamiltonian and optionally store its coupling operator.
 
         Args:
-            h0                (np.ndarray): Hamiltonian of the first mode, shape (d0, d0).
+            hamiltonian               (np.ndarray): Hamiltonian of the first mode, shape (d0, d0).
             coupling_operator (np.ndarray, optional): Operator coupling this mode to the next mode,
                                                      shape (d0, d0). Can be None if this is the last mode.
         """
         self._current_mode = 0
         
         # Adapt truncation to actual system size
-        h0_size = h0.shape[0]
+        h0_size = hamiltonian.shape[0]
         effective_truncation = min(self.num_keep, h0_size)
-        
-        evals, evecs = diagonalize_and_truncate(h0, effective_truncation)
+        evals, evecs = eigh(hamiltonian, subset_by_index=(0, effective_truncation - 1))
         self.energies = evals
         self.basis_vectors = evecs
 
@@ -104,7 +80,7 @@ class IterativeHamiltonianDiagonalizer:
 
     def add_mode(
         self,
-        hk: np.ndarray,
+        hamiltonian: np.ndarray,
         current_coupling_operator: np.ndarray,
         coupling_operator_next: np.ndarray = None,
         coupling_strength: float = 1.0,
@@ -113,16 +89,16 @@ class IterativeHamiltonianDiagonalizer:
         Add a new mode with sequential coupling: each mode couples only to the next mode.
 
         Args:
-            hk                       (np.ndarray): Hamiltonian of the new mode, shape (dk, dk).
+            hamiltonian               (np.ndarray): Hamiltonian of the new mode, shape (dk, dk).
             current_coupling_operator (np.ndarray): Operator for the current mode that couples to the previous mode,
                                                    shape (dk, dk).
-            coupling_operator_next   (np.ndarray, optional): Operator for this mode that will couple to the next mode,
+            coupling_operator_next     (np.ndarray, optional): Operator for this mode that will couple to the next mode,
                                                    shape (dk, dk). Can be None if this is the last mode.
-            coupling_strength        (float): Strength g_k of the coupling term between previous and current mode.
+            coupling_strength            (float): Strength g_k of the coupling term between previous and current mode.
         """
         self._current_mode += 1
-        d_prev = len(self.energies)  # Use actual effective dimension from previous step
-        d_new = hk.shape[0]
+        previous_dimension = len(self.energies)  # Use actual effective dimension from previous step
+        new_dimension = hamiltonian.shape[0]
 
         # Get the coupling operator from the PREVIOUS mode (not the current one)
         prev_mode_index = self._current_mode - 1
@@ -136,12 +112,12 @@ class IterativeHamiltonianDiagonalizer:
 
         # Build the total Hamiltonian using both coupling operators
         H_total = self._build_total_hamiltonian_sequential(
-            hk,
+            hamiltonian,
             prev_coupling,
             current_coupling_operator,
             coupling_strength,
-            d_prev,
-            d_new,
+            previous_dimension,
+            new_dimension,
         )
 
         # Adapt truncation to actual system size
@@ -149,7 +125,7 @@ class IterativeHamiltonianDiagonalizer:
         effective_truncation = min(self.num_keep, total_size)
 
         # Diagonalize
-        evals, evecs = diagonalize_and_truncate(H_total, effective_truncation)
+        evals, evecs = eigh(H_total, subset_by_index=(0, effective_truncation - 1))
         self.energies = evals
         self.basis_vectors = evecs
 
@@ -160,7 +136,7 @@ class IterativeHamiltonianDiagonalizer:
             # But we need it in the truncated basis for use in the next iteration
             
             # First extend it to the full current space: I_prev ⊗ coupling_operator_next
-            prev_identity = np.eye(d_prev)
+            prev_identity = np.eye(previous_dimension)
             
             # Convert sparse matrices to dense for kron product
             if hasattr(coupling_operator_next, 'toarray'):
@@ -220,30 +196,6 @@ class IterativeHamiltonianDiagonalizer:
 
         # Convert sparse to dense for diagonalization
         return H_total.toarray() if sparse.issparse(H_total) else H_total
-
-    def add_mode_sequential(
-        self,
-        hk: np.ndarray,
-        current_coupling_operator: np.ndarray,
-        coupling_operator_next: np.ndarray = None,
-        coupling_strength: float = 1.0,
-    ) -> None:
-        """
-        Convenience method for adding a mode with sequential coupling (same as add_mode).
-
-        This method makes it explicit that we're using sequential coupling where:
-        - Mode k-1 couples to mode k using mode k-1's coupling operator and mode k's current_coupling_operator
-        - Mode k will couple to mode k+1 using coupling_operator_next (if provided)
-
-        Args:
-            hk                       (np.ndarray): Hamiltonian of the new mode, shape (dk, dk).
-            current_coupling_operator (np.ndarray): Operator for the current mode that couples to the previous mode.
-            coupling_operator_next   (np.ndarray, optional): Operator for this mode that will couple to the next mode.
-            coupling_strength        (float): Strength g_k of the coupling between previous and current mode.
-        """
-        self.add_mode(
-            hk, current_coupling_operator, coupling_operator_next, coupling_strength
-        )
 
 
 if __name__ == "__main__":
