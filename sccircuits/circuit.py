@@ -145,11 +145,6 @@ class Circuit:
         phi_op = phi_zpf_0 * diags([data, data], [1, -1])
         
         # Calculate the full cosine operator for the hamiltonian
-        phi_op_with_phase = phi_op.copy()
-        phi_op_with_phase[np.diag_indices_from(phi_op_with_phase)] += phase_ext
-        cos_full_op = cosm(phi_op_with_phase)
-        hamiltonian -= self.Ej * cos_full_op
-        # Calculate the full cosine operator for the hamiltonian
         cos_full_op = cosm(phi_op + phase_ext * np.eye(dimension_bosonic))
         hamiltonian -= self.Ej * cos_full_op
 
