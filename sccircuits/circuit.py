@@ -4,11 +4,23 @@ from typing import Optional, Union
 # --- SciPy imports (dense & sparse) ---
 from scipy.sparse import diags
 from scipy.linalg import cosm
-from utilities import lanczos_krylov
-from iterative_diagonalizer import IterativeHamiltonianDiagonalizer
+from .utilities import lanczos_krylov
+from .iterative_diagonalizer import IterativeHamiltonianDiagonalizer
 
 
 class Circuit:
+    """
+    Main class for superconducting quantum circuit analysis.
+    
+    This class implements a comprehensive framework for analyzing superconducting
+    quantum circuits, including support for multi-mode systems, Bogoliubov 
+    transformations, and eigensystem calculations with truncation.
+    
+    The Circuit class can handle both single and multi-mode superconducting 
+    circuits with arbitrary coupling between modes. It supports both dense and
+    sparse matrix operations for efficient computation of large systems.
+    """
+    
     def __init__(
         self,
         frequencies: Union[np.ndarray, list[float]],
@@ -19,27 +31,31 @@ class Circuit:
         use_bogoliubov: bool = True,
     ):
         """
-        Initializes a BBQ (Black Box Quantization) object.
+        Initialize a superconducting quantum circuit.
+        
         Parameters
         ----------
         frequencies : Union[np.ndarray, list[float]]
-            Frequencies in GHz.
+            Linear mode frequencies in GHz.
         phase_zpf : Union[np.ndarray, list[float]]
-            Zero-point fluctuations in radians.
+            Phase zero-point fluctuations in radians for each mode.
         dimensions : list[int]
-            Dimensions of the BBQ system.
+            Hilbert space dimensions for each mode truncation.
         Ej : float
             Josephson energy in GHz.
         phase_ext : float, optional
-            External phase in radians, default is 0.
+            External flux phase in radians, default is 0.
         use_bogoliubov : bool, optional
-            If True, applies Bogoliubov transformation to the collective mode.
-            If False, uses the original frequencies and phase_zpf without transformation.
-            Default is True.
+            If True, applies Bogoliubov transformation to the collective mode
+            for enhanced numerical stability. If False, uses original parameters
+            without transformation. Default is True.
+            
         Raises
         ------
         ValueError
-            If the lengths of frequencies, phase_zpf, and dimensions do not match.
+            If frequencies, phase_zpf, and dimensions have different lengths,
+            or if any frequency or phase_zpf is non-positive, or if Ej exceeds
+            the stability limit when use_bogoliubov=True.
         """
 
         # Validate that frequencies, phase_zpf, and dimensions are of the same length
@@ -98,6 +114,23 @@ class Circuit:
         #     self.non_linear_phase_zpf = self._non_linear_phase_zpf()
 
     def hamiltonian_0(self, phase_ext: Optional[float] = None) -> np.ndarray:
+        """
+        Construct the Hamiltonian for the primary (zeroth) mode.
+        
+        This method builds the Hamiltonian matrix for the main nonlinear mode
+        of the circuit, including both the harmonic oscillator terms and the
+        cosine potential from the Josephson junction.
+        
+        Parameters
+        ----------
+        phase_ext : Optional[float], optional
+            External flux phase in radians. If None, uses the instance value.
+            
+        Returns
+        -------
+        np.ndarray
+            Hamiltonian matrix for the zeroth mode with shape (dimension, dimension).
+        """
         dimension = self.dimensions[0]
         if phase_ext is None:
             phase_ext = self.phase_ext

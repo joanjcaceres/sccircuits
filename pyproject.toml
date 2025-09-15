@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sccircuits"
+version = "0.1.0"
+description = "Superconducting Circuit Analysis Package"
+readme = "README.md"
+authors = [
+    {name = "Joan Caceres", email = "contact@joancaceres.com"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Physics",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12"
+]
+keywords = ["superconducting circuits", "quantum circuits", "circuit quantization", "BBQ", "black box quantization"]
+requires-python = ">=3.9"
+
+dependencies = [
+    "numpy>=1.20.0",
+    "scipy>=1.7.0", 
+    "matplotlib>=3.5.0",
+]
+
+[project.optional-dependencies]
+interactive = [
+    "ipywidgets>=7.6.0",
+    "IPython>=7.0.0"
+]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov",
+    "black",
+    "flake8",
+    "mypy",
+    "jupyter",
+    "notebook"
+]
+
+[project.urls]
+Homepage = "https://github.com/joanjcaceres/sccircuits"
+Repository = "https://github.com/joanjcaceres/sccircuits"
+Documentation = "https://github.com/joanjcaceres/sccircuits#readme"
+Issues = "https://github.com/joanjcaceres/sccircuits/issues"
+
+[tool.setuptools]
+packages = ["sccircuits"]
+
+[tool.setuptools.package-data]
+sccircuits = ["*.py"]
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
