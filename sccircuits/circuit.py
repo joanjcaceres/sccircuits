@@ -4,8 +4,8 @@ from typing import Optional, Union
 # --- SciPy imports (dense & sparse) ---
 from scipy.sparse import diags
 from scipy.linalg import cosm
-from .utilities import lanczos_krylov
-from .iterative_diagonalizer import IterativeHamiltonianDiagonalizer
+from sccircuits.utilities import lanczos_krylov
+from sccircuits.iterative_diagonalizer import IterativeHamiltonianDiagonalizer
 
 
 def _to_dense_if_sparse(matrix):
