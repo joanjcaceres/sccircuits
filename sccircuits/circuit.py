@@ -7,11 +7,6 @@ from scipy.linalg import cosm
 from sccircuits.utilities import lanczos_krylov
 from sccircuits.iterative_diagonalizer import IterativeHamiltonianDiagonalizer
 
-
-def _to_dense_if_sparse(matrix):
-    """Convert a sparse matrix to dense if necessary."""
-    return matrix.toarray() if hasattr(matrix, 'toarray') else matrix
-
 class Circuit:
     """
     Main class for superconducting quantum circuit analysis.
@@ -156,8 +151,7 @@ class Circuit:
         hamiltonian = diags(diagonal, 0)
 
         data = np.sqrt(np.arange(1, dimension_bosonic))
-        phi_op = phi_zpf_0 * diags([data, data], [1, -1])
-        phi_op = _to_dense_if_sparse(phi_op)
+        phi_op = phi_zpf_0 * diags([data, data], [1, -1]).toarray()
         
         # Calculate the full cosine operator for the hamiltonian
         cos_full_op = cosm(phi_op + phase_ext * np.eye(dimension_bosonic))
@@ -235,8 +229,8 @@ class Circuit:
                 # Still need cos_half_op for coupling to fermion
                 dimension_bosonic = self.dimensions[0]
                 data = np.sqrt(np.arange(1, dimension_bosonic))
-                phi_op = self.non_linear_phase_zpf * diags([data, data], [1, -1])
-                phi_op = _to_dense_if_sparse(phi_op)
+                phi_op = self.non_linear_phase_zpf * diags([data, data], [1, -1]).toarray()
+                
                 cos_half_op = cosm(phi_op / 2)
                 next_coupling_op = None
             
@@ -255,16 +249,10 @@ class Circuit:
                 diag_k = frequency_k * (np.arange(self.dimensions[idx + 1]) + 1 / 2)
                 hamiltonian_k = diags(diag_k, 0)
                 
-                # Convert to dense for compatibility
-                hamiltonian_k = _to_dense_if_sparse(hamiltonian_k)
-
                 # Current mode's coupling operator (couples to previous mode)
                 data = np.sqrt(np.arange(1, self.dimensions[idx + 1]))
                 linear_destroy_op_k = diags([data], [1], dtype=np.float64)
-                
-                # Convert to dense for compatibility
-                linear_destroy_op_k = _to_dense_if_sparse(linear_destroy_op_k)
-                
+                                
                 # Coupling operator for next mode (if this is not the last mode)
                 if idx < remaining_bosonic_modes - 1:  # Not the last bosonic mode
                     coupling_operator_next = linear_destroy_op_k.T.copy()
@@ -302,16 +290,10 @@ class Circuit:
                 frequency_k = self.linear_frequencies[idx]
                 diag_k = frequency_k * (np.arange(self.dimensions[idx + 1]) + 1 / 2)
                 hamiltonian_k = diags(diag_k, 0)
-                
-                # Convert to dense for compatibility
-                hamiltonian_k = _to_dense_if_sparse(hamiltonian_k)
 
                 # Current mode's coupling operator (couples to previous mode)
                 data = np.sqrt(np.arange(1, self.dimensions[idx + 1]))
                 linear_destroy_op_k = diags([data], [1], dtype=np.float64)
-                
-                # Convert to dense for compatibility
-                linear_destroy_op_k = _to_dense_if_sparse(linear_destroy_op_k)
                 
                 # Coupling operator for next mode (if this is not the last mode)
                 if idx < remaining_bosonic_modes - 1:  # Not the last bosonic mode
