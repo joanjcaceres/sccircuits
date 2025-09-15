@@ -137,7 +137,7 @@ class Circuit:
         freq_0 = self.non_linear_frequency
         phi_zpf_0 = self.non_linear_phase_zpf
 
-        # Keep the bosonic Hamiltonian as originally designed - efficient!
+        # Construct the bosonic Hamiltonian using a diagonal matrix for efficiency (avoids dense matrix operations).
         diagonal = freq_0 * (np.arange(dimension_bosonic) + 1 / 2)
         hamiltonian = diags(diagonal, 0)
 
@@ -155,8 +155,12 @@ class Circuit:
             # Calculate collective creation operator here to avoid duplication
             if self.use_bogoliubov:
                 r = self.r_bogoliubov()
+                # Cache sinh(r) and cosh(r) for efficiency
+                if not hasattr(self, "_sinh_r") or not hasattr(self, "_cosh_r"):
+                    self._sinh_r = np.sinh(r)
+                    self._cosh_r = np.cosh(r)
                 collective_creation_operator = diags(
-                    [np.sinh(r) * data, np.cosh(r) * data], [1, -1], dtype=np.float64
+                    [self._sinh_r * data, self._cosh_r * data], [1, -1], dtype=np.float64
                 )
             else:
                 collective_creation_operator = diags([data], [-1], dtype=np.float64)
