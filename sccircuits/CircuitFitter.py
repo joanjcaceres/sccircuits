@@ -17,6 +17,10 @@ class CircuitFitter:
         Ej_lower_bound: float = 0.0,
         frequencies_bounds: list[tuple[float, float]] = None,
         phase_zpf_bounds: list[tuple[float, float]] = None,
+        epsilon_r_initial: float = None,
+        Gamma_initial: float = None,
+        epsilon_r_bounds: tuple[float, float] = None,
+        Gamma_bounds: tuple[float, float] = None,
         truncation: int = 40,
         x_scale: float = 2 * np.pi,
         weights: list[float] = None,
@@ -31,6 +35,12 @@ class CircuitFitter:
                     f"But got {len(frequencies_initial)}, {len(phase_zpf_initial)}, and {len(dimensions)}."
 
             )
+            
+        # Validate fermionic coupling parameters
+        self.has_fermionic_coupling = (epsilon_r_initial is not None and Gamma_initial is not None)
+        if (epsilon_r_initial is None and Gamma_initial is not None) or (epsilon_r_initial is not None and Gamma_initial is None):
+            raise ValueError("Both epsilon_r_initial and Gamma_initial must be provided together for fermionic coupling, or both should be None.")
+        
         self.modes = len(frequencies_initial)
         self.Ej_initial = Ej_initial
         self.frequencies_initial = np.asarray(frequencies_initial)
@@ -40,6 +50,13 @@ class CircuitFitter:
         self.Ej_lower_bound = Ej_lower_bound
         self.frequencies_bounds = frequencies_bounds
         self.phase_zpf_bounds = phase_zpf_bounds
+        
+        # Store fermionic coupling parameters
+        self.epsilon_r_initial = epsilon_r_initial
+        self.Gamma_initial = Gamma_initial
+        self.epsilon_r_bounds = epsilon_r_bounds
+        self.Gamma_bounds = Gamma_bounds
+        
         self.x_scale = x_scale
         self.use_bogoliubov = use_bogoliubov
 
@@ -79,6 +96,24 @@ class CircuitFitter:
             lower_bounds.extend([b[0] for b in self.phase_zpf_bounds])
             upper_bounds.extend([b[1] for b in self.phase_zpf_bounds])
 
+        # Add fermionic coupling parameter bounds if enabled
+        if self.has_fermionic_coupling:
+            # epsilon_r bounds
+            if self.epsilon_r_bounds is None:
+                lower_bounds.append(0.0)  # epsilon_r should be positive
+                upper_bounds.append(np.inf)
+            else:
+                lower_bounds.append(self.epsilon_r_bounds[0])
+                upper_bounds.append(self.epsilon_r_bounds[1])
+            
+            # Gamma bounds  
+            if self.Gamma_bounds is None:
+                lower_bounds.append(0.0)  # Gamma should be positive
+                upper_bounds.append(np.inf)
+            else:
+                lower_bounds.append(self.Gamma_bounds[0])
+                upper_bounds.append(self.Gamma_bounds[1])
+
         return np.array([lower_bounds, upper_bounds])
 
     def fit(self, verbose=1):  # Adapt for DE.
@@ -86,13 +121,15 @@ class CircuitFitter:
 
     def eigenvalues_function(self, phase_ext, params):
         phase_ext *= self.x_scale
-        Ej, frequencies, phase_zpf = self._convert_params_to_lists(params)
+        Ej, frequencies, phase_zpf, epsilon_r, Gamma = self._convert_params_to_lists(params)
 
         circuit = Circuit(
             frequencies=frequencies,
             phase_zpf=phase_zpf,
             dimensions=self.dimensions,
             Ej=Ej,
+            Gamma=Gamma,
+            epsilon_r=epsilon_r,
             phase_ext=phase_ext,
             use_bogoliubov=self.use_bogoliubov,
         )
@@ -108,11 +145,17 @@ class CircuitFitter:
             # Use direct Ej parameterization
             first_param = self.Ej_initial
 
-        return [
+        params = [
             first_param,
             *self.frequencies_initial,
             *self.phase_zpf_initial,
         ]
+        
+        # Add fermionic coupling parameters if enabled
+        if self.has_fermionic_coupling:
+            params.extend([self.epsilon_r_initial, self.Gamma_initial])
+        
+        return params
 
     def _k_to_Ej(self, k, frequencies, phase_zpf):
         frequencies = np.array(frequencies)
@@ -135,7 +178,15 @@ class CircuitFitter:
             # Use direct Ej parameterization
             Ej = params[0]
 
-        return Ej, frequencies, phase_zpf
+        # Extract fermionic coupling parameters if enabled
+        if self.has_fermionic_coupling:
+            epsilon_r = params[1 + 2 * self.modes]
+            Gamma = params[1 + 2 * self.modes + 1]
+        else:
+            epsilon_r = None
+            Gamma = None
+
+        return Ej, frequencies, phase_zpf, epsilon_r, Gamma
 
     def _Ej_to_k(self, Ej):
         phi_zpf_rms = np.sqrt(np.sum(self.phase_zpf_initial**2))

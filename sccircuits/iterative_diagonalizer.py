@@ -180,7 +180,12 @@ class IterativeHamiltonianDiagonalizer:
                                                      shape (d0, d0). Can be None if this is the last mode.
         """
         self._current_mode = 0
-        evals, evecs = diagonalize_and_truncate(h0, self.num_keep)
+        
+        # Adapt truncation to actual system size
+        h0_size = h0.shape[0]
+        effective_truncation = min(self.num_keep, h0_size)
+        
+        evals, evecs = diagonalize_and_truncate(h0, effective_truncation)
         self.energies = evals
         self.basis_vectors = evecs
 
@@ -233,7 +238,7 @@ class IterativeHamiltonianDiagonalizer:
             coupling_strength        (float): Strength g_k of the coupling term between previous and current mode.
         """
         self._current_mode += 1
-        d_prev = self.num_keep
+        d_prev = len(self.energies)  # Use actual effective dimension from previous step
         d_new = hk.shape[0]
 
         # Get the coupling operator from the PREVIOUS mode (not the current one)
@@ -256,34 +261,40 @@ class IterativeHamiltonianDiagonalizer:
             d_new,
         )
 
+        # Adapt truncation to actual system size
+        total_size = H_total.shape[0]
+        effective_truncation = min(self.num_keep, total_size)
+
         # Diagonalize
-        evals, evecs = diagonalize_and_truncate(H_total, self.num_keep)
+        evals, evecs = diagonalize_and_truncate(H_total, effective_truncation)
         self.energies = evals
         self.basis_vectors = evecs
 
         # Store the coupling operator for the NEXT iteration (if provided)
         if coupling_operator_next is not None:
-            # The coupling operator acts only on the new mode space.
-            # We need to extend it to the full current space: I_prev ⊗ coupling_operator_next
+            # Transform the coupling operator to the current truncated basis
+            # coupling_operator_next acts on the current mode's space (dimension d_new)
+            # But we need it in the truncated basis for use in the next iteration
+            
+            # First extend it to the full current space: I_prev ⊗ coupling_operator_next
             prev_identity = np.eye(d_prev)
             
             # Convert sparse matrices to dense for kron product
             if hasattr(coupling_operator_next, 'toarray'):
                 coupling_operator_next = coupling_operator_next.toarray()
             
-            # Correct extension: I_prev ⊗ coupling_operator_next
+            # Extend: this creates an operator in the full (d_prev * d_new) space
             coupling_extended = np.kron(prev_identity, coupling_operator_next)
             
-            # Transform to the truncated basis
-            current_effective_coupling = evecs.conj().T @ coupling_extended @ evecs
-            self._mode_coupling_operators[self._current_mode] = (
-                current_effective_coupling
-            )
-            self.effective_coupling = current_effective_coupling
+            # Transform to truncated basis: V† (I_prev ⊗ coupling_operator_next) V
+            effective_coupling = evecs.conj().T @ coupling_extended @ evecs
+            
+            self._mode_coupling_operators[self._current_mode] = effective_coupling
+            self.effective_coupling = effective_coupling
         else:
             self.effective_coupling = None
 
-        # Update all tracked operators
+        # Update all tracked operators (use d_prev as originally intended)
         self._update_all_operators(evecs, d_prev, d_new)
 
     def _build_total_hamiltonian_sequential(
@@ -336,7 +347,7 @@ class IterativeHamiltonianDiagonalizer:
 
         Args:
             evecs (np.ndarray): New eigenvectors from diagonalization.
-            d_prev (int): Dimension of previous truncated space.
+            d_prev (int): Effective dimension of previous truncated space (not necessarily num_keep).
             d_new (int): Dimension of new mode.
         """
         for name, op_info in self.tracked_operators.items():
