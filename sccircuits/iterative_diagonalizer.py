@@ -30,6 +30,9 @@ class IterativeHamiltonianDiagonalizer:
                                               shape (num_keep, num_keep).
         tracked_operators        (dict): Dictionary storing operators to track through diagonalization.
         _mode_coupling_operators (dict): Internal storage for each mode's coupling operator.
+        _mode_basis_transformations (dict): Maps mode index to its basis transformation matrix (evecs).
+                                           Keys: mode indices (0, 1, 2, ...)
+                                           Values: transformation matrices from full to truncated basis.
     """
 
     def __init__(self, num_keep: int):
@@ -48,6 +51,9 @@ class IterativeHamiltonianDiagonalizer:
         self._mode_coupling_operators: dict = (
             {}
         )  # Store coupling operators for each mode
+        self._mode_basis_transformations: dict = (
+            {}
+        )  # Store basis transformation matrices (evecs) for each mode
 
 
     def add_initial_mode(
@@ -69,6 +75,9 @@ class IterativeHamiltonianDiagonalizer:
         evals, evecs = eigh(hamiltonian, subset_by_index=(0, effective_truncation - 1))
         self.energies = evals
         self.basis_vectors = evecs
+        
+        # Store the basis transformation matrix for this mode
+        self._mode_basis_transformations[self._current_mode] = evecs.copy()
 
         # Store the coupling operator for this mode (if provided)
         if coupling_operator is not None:
@@ -128,6 +137,9 @@ class IterativeHamiltonianDiagonalizer:
         evals, evecs = eigh(H_total, subset_by_index=(0, effective_truncation - 1))
         self.energies = evals
         self.basis_vectors = evecs
+        
+        # Store the basis transformation matrix for this mode
+        self._mode_basis_transformations[self._current_mode] = evecs.copy()
 
         # Store the coupling operator for the NEXT iteration (if provided)
         if coupling_operator_next is not None:
@@ -197,6 +209,34 @@ class IterativeHamiltonianDiagonalizer:
         # Convert sparse to dense for diagonalization
         return H_total.toarray() if sparse.issparse(H_total) else H_total
 
+    def get_basis_transformation(self, mode_index: int) -> np.ndarray:
+        """
+        Get the basis transformation matrix for a specific mode.
+        
+        Args:
+            mode_index (int): Index of the mode (0, 1, 2, ...)
+            
+        Returns:
+            np.ndarray: Basis transformation matrix (evecs) for the specified mode.
+                       Columns are the truncated basis vectors.
+                       
+        Raises:
+            KeyError: If the mode_index hasn't been processed yet.
+        """
+        if mode_index not in self._mode_basis_transformations:
+            raise KeyError(f"Mode {mode_index} hasn't been processed yet. Available modes: {list(self._mode_basis_transformations.keys())}")
+        
+        return self._mode_basis_transformations[mode_index]
+    
+    def get_all_basis_transformations(self) -> dict[int, np.ndarray]:
+        """
+        Get all basis transformation matrices for all processed modes.
+        
+        Returns:
+            dict[int, np.ndarray]: Dictionary mapping mode indices to their transformation matrices.
+                                  Each matrix is an independent copy, not a reference.
+        """
+        return {mode_idx: matrix.copy() for mode_idx, matrix in self._mode_basis_transformations.items()}
 
 if __name__ == "__main__":
     # Example usage with sequential coupling (replace with your own operator constructors)
