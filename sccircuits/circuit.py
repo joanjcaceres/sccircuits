@@ -143,6 +143,7 @@ class Circuit:
 
         data = np.sqrt(np.arange(1, dimension_bosonic))
         phi_op = phi_zpf_0 * diags([data, data], [1, -1])
+        phi_op = _to_dense_if_sparse(phi_op)
         
         # Calculate the full cosine operator for the hamiltonian
         cos_full_op = cosm(phi_op + phase_ext * np.eye(dimension_bosonic))
