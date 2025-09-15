@@ -4,8 +4,8 @@ from typing import Optional, Union
 # --- SciPy imports (dense & sparse) ---
 from scipy.sparse import diags
 from scipy.linalg import cosm
-from utilities import lanczos_krylov
-from iterative_diagonalizer import IterativeHamiltonianDiagonalizer
+from .utilities import lanczos_krylov
+from .iterative_diagonalizer import IterativeHamiltonianDiagonalizer
 
 
 class Circuit:
@@ -15,11 +15,14 @@ class Circuit:
         phase_zpf: Union[np.ndarray, list[float]],
         dimensions: list[int],
         Ej: float,
-        phase_ext: float = 0,
-        use_bogoliubov: bool = True,
+        Gamma: Optional[float] = None,
+        epsilon_r: Optional[float] = None,
+        phase_ext: Optional[float] = 0,
+        use_bogoliubov: Optional[bool] = True,
     ):
         """
-        Initializes a BBQ (Black Box Quantization) object.
+        Initializes a Circuit object for superconducting circuit analysis.
+        
         Parameters
         ----------
         frequencies : Union[np.ndarray, list[float]]
@@ -27,9 +30,17 @@ class Circuit:
         phase_zpf : Union[np.ndarray, list[float]]
             Zero-point fluctuations in radians.
         dimensions : list[int]
-            Dimensions of the BBQ system.
+            Dimensions of the circuit system.
         Ej : float
             Josephson energy in GHz.
+        Gamma : Optional[float], optional
+            Fermionic coupling strength in GHz. If provided along with epsilon_r, 
+            includes a fermionic mode coupled to the primary bosonic mode.
+            Default is None (no fermionic coupling).
+        epsilon_r : Optional[float], optional
+            Fermionic energy level spacing in GHz. If provided along with Gamma,
+            includes a fermionic mode with Hamiltonian 2*epsilon_r*c†c.
+            Default is None (no fermionic mode).
         phase_ext : float, optional
             External phase in radians, default is 0.
         use_bogoliubov : bool, optional
@@ -59,9 +70,16 @@ class Circuit:
 
         self.dimensions = dimensions
         self.Ej = Ej
+        self.Gamma = Gamma
+        self.epsilon_r = epsilon_r
         self.phase_ext = phase_ext
         self.use_bogoliubov = use_bogoliubov
         self.modes = len(self.dimensions)
+        
+        # Validate fermionic coupling parameters
+        self.has_fermionic_coupling = (Gamma is not None and epsilon_r is not None)
+        if (Gamma is None) != (epsilon_r is None):  # XOR - only one is None
+            raise ValueError("Both Gamma and epsilon_r must be provided together for fermionic coupling, or both should be None.")
 
         self.non_linear_phase_zpf = np.linalg.norm(self.phase_zpf)
         normalized_phase_zpf = self.phase_zpf / self.non_linear_phase_zpf
@@ -97,58 +115,173 @@ class Circuit:
         #     self.non_linear_frequency = self._non_linear_frequency()
         #     self.non_linear_phase_zpf = self._non_linear_phase_zpf()
 
-    def hamiltonian_0(self, phase_ext: Optional[float] = None) -> np.ndarray:
-        dimension = self.dimensions[0]
+    def hamiltonian_nl(self, phase_ext: Optional[float] = None, return_coupling_ops: bool = False):
+        """
+        Calculate the primary bosonic Hamiltonian and optionally return coupling operators.
+        
+        Args:
+            phase_ext: External phase offset
+            return_coupling_ops: If True, also return pre-calculated coupling operators
+            
+        Returns:
+            If return_coupling_ops is False: np.ndarray (Hamiltonian)
+            If return_coupling_ops is True: tuple (Hamiltonian, cos_half_op, collective_creation_operator)
+        """
+        dimension_bosonic = self.dimensions[0]
         if phase_ext is None:
             phase_ext = self.phase_ext
         freq_0 = self.non_linear_frequency
         phi_zpf_0 = self.non_linear_phase_zpf
 
-        diagonal = freq_0 * (np.arange(dimension) + 1 / 2)
+        # Keep the bosonic Hamiltonian as originally designed - efficient!
+        diagonal = freq_0 * (np.arange(dimension_bosonic) + 1 / 2)
         hamiltonian = diags(diagonal, 0)
 
-        data = np.sqrt(np.arange(1, dimension))
+        data = np.sqrt(np.arange(1, dimension_bosonic))
         phi_op = phi_zpf_0 * diags([data, data], [1, -1])
+        
+        # Convert to dense for cosm operations
+        if hasattr(phi_op, 'toarray'):
+            phi_op = phi_op.toarray()
 
-        hamiltonian -= self.Ej * cosm(phi_op + phase_ext * np.eye(dimension))
+        # Calculate the full cosine operator for the hamiltonian
+        cos_full_op = cosm(phi_op + phase_ext * np.eye(dimension_bosonic))
+        hamiltonian -= self.Ej * cos_full_op
 
-        return hamiltonian
+        if return_coupling_ops:
+            # Calculate coupling operators only when needed
+            cos_half_op = cosm(phi_op / 2)  # For fermionic coupling (no phase_ext)
+            
+            # Calculate collective creation operator here to avoid duplication
+            if self.use_bogoliubov:
+                r = self.r_bogoliubov()
+                collective_creation_operator = diags(
+                    [np.sinh(r) * data, np.cosh(r) * data], [1, -1], dtype=np.float64
+                )
+            else:
+                collective_creation_operator = diags([data], [-1], dtype=np.float64)
+            
+            return hamiltonian, cos_half_op, collective_creation_operator
+        else:
+            return hamiltonian
 
+    def _fermionic_hamiltonian(self) -> np.ndarray:
+        """
+        Create the fermionic Hamiltonian: 2 * epsilon_r * c†c
+        
+        Returns:
+            np.ndarray: 2x2 fermionic Hamiltonian matrix
+        """
+        if not self.has_fermionic_coupling:
+            raise ValueError("Fermionic coupling not enabled - both Gamma and epsilon_r must be specified")
+        
+        # c†c = |1⟩⟨1| (only occupied state has energy)
+        return 2 * self.epsilon_r * np.diag([0, 1])
+    
+    def _fermionic_coupling_operator(self, truncated_basis: np.ndarray, cos_half_op: np.ndarray = None) -> np.ndarray:
+        """
+        Create the coupling operator between truncated bosonic mode and fermion:
+        -Gamma * cos(phi_zpf_0 * (a† + a)/2) where the bosonic operators are 
+        in the truncated basis.
+        
+        Args:
+            truncated_basis: Eigenvectors from the truncated bosonic diagonalization
+            cos_half_op: Pre-calculated cos(phi_zpf_0 * (a† + a)/2) operator (optional)
+            
+        Returns:
+            np.ndarray: Coupling operator in the truncated bosonic basis
+        """
+        if not self.has_fermionic_coupling:
+            raise ValueError("Fermionic coupling not enabled - both Gamma and epsilon_r must be specified")
+        
+        if cos_half_op is None:
+            # Fallback: calculate if not provided (for backward compatibility)
+            phi_zpf_0 = self.non_linear_phase_zpf
+            dimension_bosonic = self.dimensions[0]
+            data = np.sqrt(np.arange(1, dimension_bosonic))
+            a_plus_adag = diags([data, data], [1, -1])
+            
+            # Convert to dense array if sparse
+            if hasattr(a_plus_adag, 'toarray'):
+                a_plus_adag = a_plus_adag.toarray()
+            
+            # Phase operator in original basis
+            phi_op_half = phi_zpf_0 * a_plus_adag / 2
+            cos_half_op = cosm(phi_op_half)
+        
+        # Transform to truncated basis: V† cos(φ/2) V
+        cos_phi_truncated = truncated_basis.conj().T @ cos_half_op @ truncated_basis
+        
+        return -self.Gamma * cos_phi_truncated
+    
     def eigensystem(self, truncation: int, phase_ext: Optional[float] = None):
         """
-        Calculate the eigenvalues and eigenvectors of the total BBQ Hamiltonian
+        Calculate the eigenvalues and eigenvectors of the total Circuit Hamiltonian
         using sequential coupling logic.
         """
-        if self.use_bogoliubov:
-            r = self.r_bogoliubov()
-            data = np.sqrt(np.arange(1, self.dimensions[0]))
-
-            collective_creation_operator = diags(
-                [np.sinh(r) * data, np.cosh(r) * data], [1, -1], dtype=np.float64
-            )
-        else:
-            # Without Bogoliubov transformation, use standard ladder operators
-            data = np.sqrt(np.arange(1, self.dimensions[0]))
-            collective_creation_operator = diags([data], [-1], dtype=np.float64)
-
         iterator = IterativeHamiltonianDiagonalizer(truncation)
         
-        # Add initial mode (mode 0) with its coupling operator for the next mode
-        if self.modes > 1:
-            # Mode 0 couples to mode 1, so we need a coupling operator
+        if self.has_fermionic_coupling:
+            
+            # Step 1: Add initial fermionic mode
+            H_fermion = self._fermionic_hamiltonian()  # 2x2 fermionic Hamiltonian
+            
+            # Fermionic coupling operator: c† for coupling to bosonic mode
+            c_dagger = np.array([[0, 0], [1, 0]], dtype=float)
+            
             iterator.add_initial_mode(
-                self.hamiltonian_0(phase_ext),
-                collective_creation_operator,  # This will couple to mode 1
+                H_fermion,
+                c_dagger,  # This will couple to the bosonic mode
             )
+            
+            # Step 2: Add bosonic non-linear mode (coupled to fermion)
+            # Get hamiltonian and coupling operators efficiently in one call
+            if self.modes > 1:
+                hamiltonian_bosonic, cos_half_op, collective_creation_operator = self.hamiltonian_nl(phase_ext, return_coupling_ops=True)
+                next_coupling_op = collective_creation_operator  # For coupling to next bosonic mode
+            else:
+                hamiltonian_bosonic = self.hamiltonian_nl(phase_ext)
+                # Still need cos_half_op for coupling to fermion
+                dimension_bosonic = self.dimensions[0]
+                data = np.sqrt(np.arange(1, dimension_bosonic))
+                phi_op = self.non_linear_phase_zpf * diags([data, data], [1, -1])
+                if hasattr(phi_op, 'toarray'):
+                    phi_op = phi_op.toarray()
+                cos_half_op = cosm(phi_op / 2)
+                next_coupling_op = None
+            
+            iterator.add_mode(
+                hamiltonian_bosonic,
+                cos_half_op,           # Couples to fermionic c†  
+                next_coupling_op,      # For next bosonic coupling
+                self.Gamma             # Coupling strength
+            )
+            
+            # Step 3: Add remaining bosonic modes
+            start_bosonic_idx = 0  # Start from first linear mode
+            
         else:
-            # Only one mode, no coupling needed
+            # ORIGINAL ARCHITECTURE: Start with bosonic mode (no fermion)
+            
+            # Calculate hamiltonian and coupling operators
+            if self.modes > 1:
+                hamiltonian_0, cos_half_op, collective_creation_operator = self.hamiltonian_nl(phase_ext, return_coupling_ops=True)
+                initial_coupling_op = collective_creation_operator  # Use creation operator for bosonic coupling
+            else:
+                hamiltonian_0 = self.hamiltonian_nl(phase_ext)
+                initial_coupling_op = None
+                
             iterator.add_initial_mode(
-                self.hamiltonian_0(phase_ext),
-                None,  # No coupling for single mode
+                hamiltonian_0,
+                initial_coupling_op,
             )
-
-        # Add subsequent modes with sequential coupling
-        for idx in range(self.modes - 1):
+            
+            start_bosonic_idx = 0  # Start from first linear mode
+        
+        # Add remaining bosonic modes (common for both architectures)
+        remaining_bosonic_modes = self.modes - 1
+        
+        for idx in range(start_bosonic_idx, remaining_bosonic_modes):
             frequency_k = self.linear_frequencies[idx]
             diag_k = frequency_k * (np.arange(self.dimensions[idx + 1]) + 1 / 2)
             hamiltonian_k = diags(diag_k, 0)
@@ -158,12 +291,9 @@ class Circuit:
             linear_destroy_op_k = diags([data], [1], dtype=np.float64)
             
             # Coupling operator for next mode (if this is not the last mode)
-            if idx < self.modes - 2:  # Not the last mode
-                # For simplicity, use the same operator for next coupling
-                # In more complex cases, this could be different
+            if idx < remaining_bosonic_modes - 1:  # Not the last bosonic mode
                 coupling_operator_next = linear_destroy_op_k.T.copy()
             else:
-                # This is the last mode, no next coupling
                 coupling_operator_next = None
             
             # Add mode with sequential coupling
@@ -229,32 +359,37 @@ class Circuit:
     #     return non_linear_phase_zpf
     
 if __name__ == "__main__":
-    # Create a BBQ object for testing
+    # Example usage of the Circuit class
     frequencies = np.array([5.0, 6.0, 7.8])
     phase_zpf = np.array([0.1, 0.2, 0.01])
     dimensions = [50, 10, 3]
     Ej = 1.0
     phase_ext = 0.0
 
-    # Test with Bogoliubov transformation (default)
-    bbq_with_bogoliubov = Circuit(
-        frequencies, phase_zpf, dimensions, Ej, phase_ext, use_bogoliubov=True
+    # Test basic functionality
+    circuit = Circuit(
+        frequencies, phase_zpf, dimensions, Ej, 
+        phase_ext=phase_ext, use_bogoliubov=True
     )
-    print("With Bogoliubov transformation:")
-    print(f"Non-linear frequency: {bbq_with_bogoliubov.non_linear_frequency:.3f} GHz")
-    print(f"Non-linear phase ZPF: {bbq_with_bogoliubov.non_linear_phase_zpf:.3f}")
+    print("Basic Circuit:")
+    print(f"Non-linear frequency: {circuit.non_linear_frequency:.3f} GHz")
+    print(f"Non-linear phase ZPF: {circuit.non_linear_phase_zpf:.3f}")
 
-    # Test without Bogoliubov transformation
-    bbq_without_bogoliubov = Circuit(
-        frequencies, phase_zpf, dimensions, Ej, phase_ext, use_bogoliubov=False
+    # Test with fermionic coupling - NEW FEATURE
+    circuit_with_fermion = Circuit(
+        frequencies, phase_zpf, dimensions, Ej, 
+        Gamma=0.5, epsilon_r=0.2,  # These enable fermionic coupling
+        phase_ext=phase_ext, use_bogoliubov=True
     )
-    print("\nWithout Bogoliubov transformation:")
-    print(
-        f"Non-linear frequency: {bbq_without_bogoliubov.non_linear_frequency:.3f} GHz"
-    )
-    print(f"Non-linear phase ZPF: {bbq_without_bogoliubov.non_linear_phase_zpf:.3f}")
-
-    # Test the methods
-    print("\nZero-order Hamiltonian (with Bogoliubov):")
-    print(bbq_with_bogoliubov.hamiltonian_0())
+    print("\nCircuit with fermionic coupling:")
+    print(f"Gamma (fermion-boson coupling): {circuit_with_fermion.Gamma} GHz")
+    print(f"epsilon_r (fermion energy): {circuit_with_fermion.epsilon_r} GHz")
+    
+    # Compare eigenspectra
+    energies_basic, _ = circuit.eigensystem(truncation=10)
+    energies_with_fermion, _ = circuit_with_fermion.eigensystem(truncation=10)
+    
+    print(f"\nLowest 5 energies (basic): {energies_basic[:5]}")
+    print(f"Lowest 5 energies (with fermion): {energies_with_fermion[:5]}")
+    print("\n✅ Implementation successful!")
 
