@@ -183,40 +183,6 @@ class Circuit:
         # c†c = |1⟩⟨1| (only occupied state has energy)
         return 2 * self.epsilon_r * np.diag([0, 1])
     
-    def _fermionic_coupling_operator(self, truncated_basis: np.ndarray, cos_half_op: np.ndarray = None) -> np.ndarray:
-        """
-        Create the coupling operator between truncated bosonic mode and fermion:
-        -Gamma * cos(phi_zpf_0 * (a† + a)/2) where the bosonic operators are 
-        in the truncated basis.
-        
-        Args:
-            truncated_basis: Eigenvectors from the truncated bosonic diagonalization
-            cos_half_op: Pre-calculated cos(phi_zpf_0 * (a† + a)/2) operator (optional)
-            
-        Returns:
-            np.ndarray: Coupling operator in the truncated bosonic basis
-        """
-        if not self.has_fermionic_coupling:
-            raise ValueError("Fermionic coupling not enabled - both Gamma and epsilon_r must be specified")
-        
-        if cos_half_op is None:
-            # Fallback: calculate if not provided (for backward compatibility)
-            phi_zpf_0 = self.non_linear_phase_zpf
-            dimension_bosonic = self.dimensions[0]
-            data = np.sqrt(np.arange(1, dimension_bosonic))
-            a_plus_adag = diags([data, data], [1, -1])
-            
-            # Convert to dense array if sparse
-            a_plus_adag = _to_dense_if_sparse(a_plus_adag)
-            
-            # Phase operator in original basis
-            phi_op_half = phi_zpf_0 * a_plus_adag / 2
-            cos_half_op = cosm(phi_op_half)
-        
-        # Transform to truncated basis: V† cos(φ/2) V
-        cos_phi_truncated = truncated_basis.conj().T @ cos_half_op @ truncated_basis
-        
-        return -self.Gamma * cos_phi_truncated
     
     def eigensystem(self, truncation: int, phase_ext: Optional[float] = None):
         """
