@@ -13,6 +13,18 @@ def _to_dense_if_sparse(matrix):
     return matrix.toarray() if hasattr(matrix, 'toarray') else matrix
 
 class Circuit:
+    """
+    Main class for superconducting quantum circuit analysis.
+    
+    This class implements a comprehensive framework for analyzing superconducting
+    quantum circuits, including support for multi-mode systems, Bogoliubov 
+    transformations, and eigensystem calculations with truncation.
+    
+    The Circuit class can handle both single and multi-mode superconducting 
+    circuits with arbitrary coupling between modes. It supports both dense and
+    sparse matrix operations for efficient computation of large systems.
+    """
+    
     def __init__(
         self,
         frequencies: Union[np.ndarray, list[float]],
@@ -30,9 +42,9 @@ class Circuit:
         Parameters
         ----------
         frequencies : Union[np.ndarray, list[float]]
-            Frequencies in GHz.
+            Linear mode frequencies in GHz.
         phase_zpf : Union[np.ndarray, list[float]]
-            Zero-point fluctuations in radians.
+            Phase zero-point fluctuations in radians for each mode.
         dimensions : list[int]
             Dimensions of the circuit system.
         Ej : float
@@ -46,15 +58,18 @@ class Circuit:
             includes a fermionic mode with Hamiltonian 2*epsilon_r*c†c.
             Default is None (no fermionic mode).
         phase_ext : float, optional
-            External phase in radians, default is 0.
+            External flux phase in radians, default is 0.
         use_bogoliubov : bool, optional
-            If True, applies Bogoliubov transformation to the collective mode.
-            If False, uses the original frequencies and phase_zpf without transformation.
-            Default is True.
+            If True, applies Bogoliubov transformation to the collective mode
+            for enhanced numerical stability. If False, uses original parameters
+            without transformation. Default is True.
+            
         Raises
         ------
         ValueError
-            If the lengths of frequencies, phase_zpf, and dimensions do not match.
+            If frequencies, phase_zpf, and dimensions have different lengths,
+            or if any frequency or phase_zpf is non-positive, or if Ej exceeds
+            the stability limit when use_bogoliubov=True.
         """
 
         # Validate that frequencies, phase_zpf, and dimensions are of the same length

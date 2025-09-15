@@ -1,9 +1,9 @@
 import csv
 
 import numpy as np
-from circuit import Circuit
+from .circuit import Circuit
 
-from transition_fitter import TransitionFitter
+from .transition_fitter import TransitionFitter
 
 
 class CircuitFitter:

@@ -8,12 +8,54 @@ import matplotlib.pyplot as plt
 
 
 class BBQ:
+    """
+    Black Box Quantization (BBQ) for superconducting circuits.
+    
+    This class implements the Black Box Quantization method for analyzing
+    superconducting quantum circuits from their classical circuit parameters
+    (capacitance and inductance matrices). It calculates linear modes, 
+    frequencies, and zero-point fluctuations needed for circuit quantization.
+    
+    The BBQ method is particularly useful when you have the classical circuit
+    description and want to extract the quantum parameters without detailed
+    knowledge of the circuit topology.
+    
+    Attributes
+    ----------
+    C_matrix : np.ndarray
+        Capacitance matrix of the circuit
+    L_inv_matrix : np.ndarray  
+        Inverse inductance matrix of the circuit
+    non_linear_nodes : tuple
+        Indices of nodes containing nonlinear elements (Josephson junctions)
+    """
+    
     def __init__(
         self,
         C_matrix: np.ndarray,
         L_inv_matrix: np.ndarray,
         non_linear_nodes: tuple = (-1, 0),
     ):
+        """
+        Initialize BBQ analysis from circuit matrices.
+        
+        Parameters
+        ----------
+        C_matrix : np.ndarray
+            Capacitance matrix of the circuit in Farads. Should be symmetric
+            and positive definite.
+        L_inv_matrix : np.ndarray
+            Inverse inductance matrix (1/L) of the circuit in 1/Henries.
+            Should have the same shape as C_matrix.
+        non_linear_nodes : tuple, optional
+            Indices specifying the nodes containing nonlinear elements
+            (typically Josephson junctions). Default is (-1, 0).
+            
+        Raises
+        ------
+        ValueError
+            If C_matrix and L_inv_matrix don't have the same shape.
+        """
         self.C_matrix = C_matrix
         self.L_inv_matrix = L_inv_matrix
         self.non_linear_nodes = non_linear_nodes
@@ -250,7 +292,7 @@ class BBQ:
 
 if __name__ == "__main__":
     # Example usage
-    from utilities import El_to_L
+    from .utilities import El_to_L
 
     N = 120
     Cjb = 40e-15
