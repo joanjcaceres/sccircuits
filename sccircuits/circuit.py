@@ -309,6 +309,9 @@ class Circuit:
                     self.linear_coupling[idx] # Coupling strength
                 )
 
+        # Store the diagonalizer for access to basis transformations
+        self._last_diagonalizer = iterator
+        
         return iterator.energies, iterator.basis_vectors
 
     def r_bogoliubov(self) -> float:
@@ -328,6 +331,22 @@ class Circuit:
             * np.log(1 - 2 * self.Ej * phi_zpf_rms**2 / collective_frequency)
         )
         return r
+    
+    def get_basis_transformations(self) -> dict[int, np.ndarray]:
+        """
+        Get all basis transformation matrices from the last eigensystem calculation.
+        
+        Returns:
+            dict[int, np.ndarray]: Dictionary mapping mode indices to their transformation matrices.
+                                  Each matrix is an independent copy.
+                                  
+        Raises:
+            AttributeError: If eigensystem() hasn't been called yet.
+        """
+        if not hasattr(self, '_last_diagonalizer') or self._last_diagonalizer is None:
+            raise AttributeError("No eigensystem calculation found. Call eigensystem() first.")
+        
+        return self._last_diagonalizer.get_basis_transformations()
 
     # def _non_collective_eigsystem(self) -> np.ndarray:
     #     """

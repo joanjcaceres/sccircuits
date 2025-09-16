@@ -208,27 +208,8 @@ class IterativeHamiltonianDiagonalizer:
 
         # Convert sparse to dense for diagonalization
         return H_total.toarray() if sparse.issparse(H_total) else H_total
-
-    def get_basis_transformation(self, mode_index: int) -> np.ndarray:
-        """
-        Get the basis transformation matrix for a specific mode.
-        
-        Args:
-            mode_index (int): Index of the mode (0, 1, 2, ...)
-            
-        Returns:
-            np.ndarray: Basis transformation matrix (evecs) for the specified mode.
-                       Columns are the truncated basis vectors.
-                       
-        Raises:
-            KeyError: If the mode_index hasn't been processed yet.
-        """
-        if mode_index not in self._mode_basis_transformations:
-            raise KeyError(f"Mode {mode_index} hasn't been processed yet. Available modes: {list(self._mode_basis_transformations.keys())}")
-        
-        return self._mode_basis_transformations[mode_index]
     
-    def get_all_basis_transformations(self) -> dict[int, np.ndarray]:
+    def get_basis_transformations(self) -> dict[int, np.ndarray]:
         """
         Get all basis transformation matrices for all processed modes.
         
