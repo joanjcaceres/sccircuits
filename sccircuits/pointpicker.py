@@ -551,9 +551,9 @@ class PointPicker:
 
         # Append point
         self.points = np.vstack([self.points, [x, y]])
-        # Save label metadata
-        self.labels.append(self._current_label)
-        self.sigmas.append(self._current_sigma)
+        # Newly added points start without label or sigma; tagging is explicit
+        self.labels.append(None)
+        self.sigmas.append(None)
 
         (marker,) = self.ax.plot(x, y, "ro", markersize=6)
         self._markers.append(marker)
