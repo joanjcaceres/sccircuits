@@ -76,9 +76,11 @@ class PointPicker:
         self._pending_tag_idx: Optional[int] = None  # idx awaiting widget confirm
         self._mpl_box_ax = self._mpl_button_ax = None
         self._mpl_i_ax = self._mpl_j_ax = None  # Separate axes for i and j textboxes
+        self._mpl_sigma_ax = None  # Axis for sigma textbox
         self._mpl_remove_ax = None  # Axis for remove tag button
         self._mpl_textbox = self._mpl_button = None
         self._mpl_i_textbox = self._mpl_j_textbox = None  # Separate textbox references
+        self._mpl_sigma_textbox = None  # Sigma textbox reference
         self._mpl_remove_button = None  # Remove tag button reference
         self._input_in_progress = False  # Flag to prevent multiple input() calls
 
@@ -88,6 +90,8 @@ class PointPicker:
         self._vline: Optional[plt.Line2D] = None  # Vertical guide line artist
         self.labels: list[Optional[Tuple[int, int]]] = []  # label metadata
         self._current_label: Optional[Tuple[int, int]] = None
+        self.sigmas: list[Optional[float]] = []  # per-point uncertainty (None = unset)
+        self._current_sigma: Optional[float] = None  # last used sigma value
 
         # Data containers: store points as an N×2 NumPy array
         self.points: np.ndarray = np.empty((0, 2))
@@ -117,13 +121,16 @@ class PointPicker:
             return
         if self._widget_box is None:
             i_field = _ipyw.IntText(
-                description="i:", layout=_ipyw.Layout(width="160px")
+                description="i:", layout=_ipyw.Layout(width="140px")
             )
             j_field = _ipyw.IntText(
-                description="j:", layout=_ipyw.Layout(width="160px")
+                description="j:", layout=_ipyw.Layout(width="140px")
             )
-            # Prefill fields: if the clicked point already has a label, show it;
-            # otherwise fall back to the last‑used label.
+            sigma_field = _ipyw.FloatText(
+                description="sigma:", layout=_ipyw.Layout(width="160px")
+            )
+            # Prefill fields: if the clicked point already has a label/sigma, show it;
+            # otherwise fall back to the last‑used values.
             initial_label = None
             if self._pending_tag_idx is not None:
                 lab = self.labels[self._pending_tag_idx]
@@ -133,12 +140,33 @@ class PointPicker:
                 initial_label = self._current_label
             if initial_label is not None:
                 i_field.value, j_field.value = initial_label
+
+            initial_sigma: Optional[float] = None
+            if self._pending_tag_idx is not None:
+                sigma_val = self.sigmas[self._pending_tag_idx]
+                if sigma_val is not None:
+                    initial_sigma = sigma_val
+            if initial_sigma is None:
+                initial_sigma = self._current_sigma
+            if initial_sigma is not None:
+                sigma_field.value = float(initial_sigma)
+
             btn = _ipyw.Button(description="OK", layout=_ipyw.Layout(width="80px"))
             remove_btn = _ipyw.Button(description="Remove Tag", layout=_ipyw.Layout(width="120px"))
             lbl_out = _ipyw.Output(layout=_ipyw.Layout(font_size="12px"))
-            box = _ipyw.VBox([_ipyw.HBox([i_field, j_field, btn, remove_btn]), lbl_out])
-            box.layout = _ipyw.Layout(width="500px")
-            self._widget_box = (box, i_field, j_field, btn, remove_btn, lbl_out)
+            box = _ipyw.VBox(
+                [_ipyw.HBox([i_field, j_field, sigma_field, btn, remove_btn]), lbl_out]
+            )
+            box.layout = _ipyw.Layout(width="640px")
+            self._widget_box = (
+                box,
+                i_field,
+                j_field,
+                sigma_field,
+                btn,
+                remove_btn,
+                lbl_out,
+            )
 
             def _on_ok(_b):
                 if self._pending_tag_idx is None:
@@ -148,14 +176,23 @@ class PointPicker:
                     return
                 idx = self._pending_tag_idx
                 try:
-                    i, j = int(i_field.value), int(j_field.value)
+                    i = int(i_field.value)
+                    j = int(j_field.value)
+                    sigma_val = float(sigma_field.value)
                 except Exception:
                     with lbl_out:
                         _ipy_clear()
                         print("Valores inválidos.")
                     return
+                if sigma_val <= 0:
+                    with lbl_out:
+                        _ipy_clear()
+                        print("sigma debe ser > 0.")
+                    return
                 self.labels[idx] = (i, j)
                 self._current_label = (i, j)
+                self.sigmas[idx] = sigma_val
+                self._current_sigma = sigma_val
                 # update marker color to green for tagged point
                 m = self._markers[idx]
                 m.set_markerfacecolor("g")
@@ -164,7 +201,7 @@ class PointPicker:
                 self._pending_tag_idx = None
                 with lbl_out:
                     _ipy_clear()
-                    print(f"Punto #{idx} etiquetado con ({i},{j})")
+                    print(f"Punto #{idx} etiquetado con ({i},{j}) y sigma={sigma_val}")
                 # close widget after labeling
                 box.close()
                 self._widget_box = None
@@ -177,6 +214,7 @@ class PointPicker:
                     return
                 idx = self._pending_tag_idx
                 self.labels[idx] = None  # Remove the tag
+                self.sigmas[idx] = None
                 # update marker color to red for unlabeled point
                 m = self._markers[idx]
                 m.set_markerfacecolor("r")
@@ -188,6 +226,7 @@ class PointPicker:
                 # Clear the text boxes
                 i_field.value = 0
                 j_field.value = 0
+                sigma_field.value = 0.0
                 self._pending_tag_idx = None
                 # close widget after removing tag
                 box.close()
@@ -211,19 +250,29 @@ class PointPicker:
 
         fig = self.ax.figure
         # Create axes for i textbox, j textbox, OK button, and Remove Tag button
-        self._mpl_i_ax = fig.add_axes([0.10, 0.02, 0.12, 0.05])
-        self._mpl_j_ax = fig.add_axes([0.25, 0.02, 0.12, 0.05])
-        self._mpl_button_ax = fig.add_axes([0.40, 0.02, 0.08, 0.05])
-        self._mpl_remove_ax = fig.add_axes([0.50, 0.02, 0.12, 0.05])
+        self._mpl_i_ax = fig.add_axes([0.08, 0.02, 0.10, 0.05])
+        self._mpl_j_ax = fig.add_axes([0.20, 0.02, 0.10, 0.05])
+        self._mpl_sigma_ax = fig.add_axes([0.32, 0.02, 0.14, 0.05])
+        self._mpl_button_ax = fig.add_axes([0.48, 0.02, 0.08, 0.05])
+        self._mpl_remove_ax = fig.add_axes([0.58, 0.02, 0.14, 0.05])
 
         # Create the two text boxes
         i_txt = TextBox(self._mpl_i_ax, "i:", initial="")
         j_txt = TextBox(self._mpl_j_ax, "j:", initial="")
+        sigma_txt = TextBox(self._mpl_sigma_ax, "sigma:", initial="")
 
         # Pre-fill with initial values if provided
         if initial is not None:
             i_txt.set_val(str(initial[0]))
             j_txt.set_val(str(initial[1]))
+
+        sigma_initial: Optional[float] = None
+        if self._pending_tag_idx is not None:
+            sigma_initial = self.sigmas[self._pending_tag_idx]
+        if sigma_initial is None:
+            sigma_initial = self._current_sigma
+        if sigma_initial is not None:
+            sigma_txt.set_val(f"{sigma_initial:g}")
 
         btn = Button(self._mpl_button_ax, "OK")
         remove_btn = Button(self._mpl_remove_ax, "Remove Tag")
@@ -234,17 +283,23 @@ class PointPicker:
             try:
                 i = int(i_txt.text.strip())
                 j = int(j_txt.text.strip())
+                sigma_val = float(sigma_txt.text.strip())
             except Exception:
                 print("Invalid format. Please enter integers in both i and j fields.")
+                return
+            if sigma_val <= 0:
+                print("Invalid sigma. Please enter a positive value.")
                 return
             idx = self._pending_tag_idx
             self.labels[idx] = (i, j)
             self._current_label = (i, j)
+            self.sigmas[idx] = sigma_val
+            self._current_sigma = sigma_val
             m = self._markers[idx]
             m.set_markerfacecolor("g")
             m.set_markeredgecolor("g")
             self.ax.figure.canvas.draw_idle()
-            print(f"Point #{idx} labeled as ({i}, {j}) ✓")
+            print(f"Point #{idx} labeled as ({i}, {j}) with sigma={sigma_val:.4g} ✓")
 
             # Don't close the widgets - keep them open for next tagging
             # Just reset the pending index
@@ -258,6 +313,7 @@ class PointPicker:
                 return
             idx = self._pending_tag_idx
             self.labels[idx] = None  # Remove the tag
+            self.sigmas[idx] = None
             m = self._markers[idx]
             m.set_markerfacecolor("r")  # Set back to red (unlabeled)
             m.set_markeredgecolor("r")
@@ -267,6 +323,7 @@ class PointPicker:
             # Clear the text boxes
             i_txt.set_val("")
             j_txt.set_val("")
+            sigma_txt.set_val("")
 
             # Don't close the widgets - keep them open for next tagging
             # Just reset the pending index
@@ -278,12 +335,14 @@ class PointPicker:
         # Connect events to both text boxes and buttons
         i_txt.on_submit(_apply)
         j_txt.on_submit(_apply)
+        sigma_txt.on_submit(_apply)
         btn.on_clicked(_apply)
         remove_btn.on_clicked(_remove_tag)
 
         # Store references
         self._mpl_i_textbox = i_txt
         self._mpl_j_textbox = j_txt
+        self._mpl_sigma_textbox = sigma_txt
         self._mpl_button = btn
         self._mpl_remove_button = remove_btn
 
@@ -453,6 +512,7 @@ class PointPicker:
         self.points = np.vstack([self.points, [x, y]])
         # Save label metadata
         self.labels.append(self._current_label)
+        self.sigmas.append(self._current_sigma)
 
         (marker,) = self.ax.plot(x, y, "ro", markersize=6)
         self._markers.append(marker)
@@ -465,6 +525,7 @@ class PointPicker:
         self._markers[idx].remove()
         self._markers.pop(idx)
         self.labels.pop(idx)
+        self.sigmas.pop(idx)
         self.ax.figure.canvas.draw_idle()
         print(f"Deleted point #{idx}")
 
@@ -493,9 +554,11 @@ class PointPicker:
                 # First time → create and pre-fill the widget automatically
                 self._build_tag_widget()
             else:
-                # Widget already visible → just update the i,j fields
-                box, i_field, j_field, btn, remove_btn, out = self._widget_box
-                # Pick up the existing label if set, else the last-used one
+                # Widget already visible → just update the fields
+                (box, i_field, j_field, sigma_field, btn, remove_btn, out) = (
+                    self._widget_box
+                )
+                # Pick up the existing label/sigma if set, else the last-used ones
                 lab = (
                     self.labels[idx]
                     if self.labels[idx] is not None
@@ -503,12 +566,27 @@ class PointPicker:
                 )
                 if lab is not None:
                     i_field.value, j_field.value = lab
+                sigma_val = (
+                    self.sigmas[idx]
+                    if self.sigmas[idx] is not None
+                    else self._current_sigma
+                )
+                if sigma_val is not None:
+                    sigma_field.value = float(sigma_val)
                 # Provide user feedback inside the widget
                 with out:
                     _ipy_clear()
-                    print(f"Point #{idx} selected. Modify i,j or press OK. Or remove tag.")
+                    print(
+                        "Point #{} selected. Modify i, j, sigma or press OK. Or remove tag.".format(
+                            idx
+                        )
+                    )
 
-            print(f"Please enter i,j in the widget and press OK to tag point #{idx}, or Remove Tag to remove label")
+            print(
+                "Please enter i, j and sigma in the widget and press OK to tag point #{}, or Remove Tag to remove label".format(
+                    idx
+                )
+            )
             return
 
         # 2) Script (.py) → Matplotlib TextBox + Button (non-blocking)
@@ -584,6 +662,8 @@ class PointPicker:
                     self._mpl_i_textbox.disconnect_events()
                 if self._mpl_j_textbox is not None:
                     self._mpl_j_textbox.disconnect_events()
+                if self._mpl_sigma_textbox is not None:
+                    self._mpl_sigma_textbox.disconnect_events()
                 if self._mpl_button is not None:
                     # Button widgets don't have disconnect_events, but we can clear callbacks
                     self._mpl_button.on_clicked(lambda x: None)
@@ -599,6 +679,8 @@ class PointPicker:
                     fig.delaxes(self._mpl_i_ax)
                 if self._mpl_j_ax is not None:
                     fig.delaxes(self._mpl_j_ax)
+                if self._mpl_sigma_ax is not None:
+                    fig.delaxes(self._mpl_sigma_ax)
                 if self._mpl_button_ax is not None:
                     fig.delaxes(self._mpl_button_ax)
                 if self._mpl_remove_ax is not None:
@@ -613,6 +695,8 @@ class PointPicker:
                         self._mpl_i_ax.remove()
                     if self._mpl_j_ax is not None:
                         self._mpl_j_ax.remove()
+                    if self._mpl_sigma_ax is not None:
+                        self._mpl_sigma_ax.remove()
                     if self._mpl_button_ax is not None:
                         self._mpl_button_ax.remove()
                     if self._mpl_remove_ax is not None:
@@ -628,9 +712,11 @@ class PointPicker:
             # Reset all references
             self._mpl_box_ax = self._mpl_button_ax = None
             self._mpl_i_ax = self._mpl_j_ax = None
+            self._mpl_sigma_ax = None
             self._mpl_remove_ax = None
             self._mpl_textbox = self._mpl_button = None
             self._mpl_i_textbox = self._mpl_j_textbox = None
+            self._mpl_sigma_textbox = None
             self._mpl_remove_button = None
             self._pending_tag_idx = None
 
@@ -660,6 +746,12 @@ class PointPicker:
         """
         self._current_label = label
 
+    def set_current_sigma(self, sigma: float | None):
+        """Define the sigma pre-filled when tagging new points. Use None to clear."""
+        if sigma is not None and sigma <= 0:
+            raise ValueError("sigma must be positive when provided")
+        self._current_sigma = sigma
+
     def summary(self):
         """Prints a summary of the selected points."""
         n = self.points.shape[0]
@@ -677,14 +769,16 @@ class PointPicker:
             print("No points selected.")
             return
         # Header
-        print("Idx |   i |   j |       x |       y")
-        print("--- | --- | --- | -------- | --------")
+        print("Idx |   i |   j |       x |       y |  sigma")
+        print("--- | --- | --- | -------- | -------- | ------")
         # Rows
         for idx, (x, y) in enumerate(self.points):
             lab = self.labels[idx]
+            sigma_val = self.sigmas[idx]
             i = str(lab[0]) if lab is not None else ""
             j = str(lab[1]) if lab is not None else ""
-            print(f"{idx:3d} | {i:3s} | {j:3s} | {x:8.4f} | {y:8.4f}")
+            sigma_str = f"{sigma_val:6.3f}" if sigma_val is not None else "      "
+            print(f"{idx:3d} | {i:3s} | {j:3s} | {x:8.4f} | {y:8.4f} | {sigma_str}")
 
     def save_to_csv(self, filename: str = "picked_points.csv"):
         """Save points to CSV.
@@ -700,18 +794,24 @@ class PointPicker:
             # Legacy behaviour
             with open(filename, "w", newline="") as f:
                 writer = csv.writer(f)
-                writer.writerow(["x", "y"])
-                writer.writerows(self.points.tolist())
+                writer.writerow(["x", "y", "sigma"])
+                for (x, y), sigma in zip(self.points, self.sigmas):
+                    writer.writerow([
+                        float(x),
+                        float(y),
+                        "" if sigma is None else float(sigma),
+                    ])
             print(f"Saved {self.points.shape[0]} points to {filename}")
             return
 
         # Axis‑lock: include labels & order
         records: list[tuple[int | str, int | str, float, float]] = []
-        for (x, y), lab in zip(self.points, self.labels):
+        for (x, y), lab, sigma in zip(self.points, self.labels, self.sigmas):
+            sigma_entry: float | str = "" if sigma is None else float(sigma)
             if lab is None:
-                records.append(("", "", float(x), float(y)))
+                records.append(("", "", float(x), float(y), sigma_entry))
             else:
-                records.append((lab[0], lab[1], float(x), float(y)))
+                records.append((lab[0], lab[1], float(x), float(y), sigma_entry))
         # Sort by label (ints first; unlabeled last) then by y
         records.sort(
             key=lambda r: (
@@ -723,31 +823,46 @@ class PointPicker:
 
         with open(filename, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["i", "j", "x", "y"])
+            writer.writerow(["i", "j", "x", "y", "sigma"])
             writer.writerows(records)
         print(f"Saved {len(records)} points to {filename}")
 
     @staticmethod
     def load_csv_to_dict(
         filename: str,
-    ) -> dict[tuple[int, int], list[tuple[float, float]]]:
+        *,
+        include_sigma: bool = False,
+    ) -> dict[tuple[int, int], list[tuple[float, float] | tuple[float, float, Optional[float]]]]:
         """
         Load points from a CSV file saved by PointPicker.save_to_csv (axis_lock mode).
-        Returns a dict mapping (i, j) tuples to lists of (x, y) coordinate tuples.
+        Returns a dict mapping (i, j) tuples to lists of (x, y[, sigma]) coordinate tuples.
+        Set include_sigma=True to obtain sigma values when available.
         """
-        data: dict[tuple[int, int], list[tuple[float, float]]] = {}
+        data: dict[tuple[int, int], list] = {}
         with open(filename, newline="") as f:
             reader = csv.reader(f)
             header = next(reader)
-            if header != ["i", "j", "x", "y"]:
-                raise ValueError(f"Expected header ['i','j','x','y'], got {header}")
-            for i_str, j_str, x_str, y_str in reader:
+            has_sigma = header == ["i", "j", "x", "y", "sigma"]
+            if not has_sigma and header != ["i", "j", "x", "y"]:
+                raise ValueError(
+                    f"Expected header ['i','j','x','y'] or ['i','j','x','y','sigma'], got {header}"
+                )
+            for row in reader:
+                if has_sigma:
+                    i_str, j_str, x_str, y_str, sigma_str = row
+                else:
+                    i_str, j_str, x_str, y_str = row
+                    sigma_str = ""
                 i = int(i_str)
                 j = int(j_str)
                 x = float(x_str)
                 y = float(y_str)
+                sigma_val = float(sigma_str) if sigma_str.strip() else None
                 key = (i, j)
-                data.setdefault(key, []).append((x, y))
+                if include_sigma:
+                    data.setdefault(key, []).append((x, y, sigma_val))
+                else:
+                    data.setdefault(key, []).append((x, y))
         return data
 
     def save_project(self, filename: str = "pointpicker_project.npz"):
@@ -762,6 +877,7 @@ class PointPicker:
             filename,
             points=self.points,
             labels=np.array(self.labels, dtype=object),
+            sigmas=np.array(self.sigmas, dtype=object),
             axis_lock=self.axis_lock,
         )
         print(f"Project saved to {filename}")
@@ -775,6 +891,23 @@ class PointPicker:
         picker = cls(ax, axis_lock=bool(data["axis_lock"]))
         picker.points = np.array(data["points"])
         picker.labels = list(data["labels"])
+        if "sigmas" in data.files:
+            picker.sigmas = []
+            for val in data["sigmas"]:
+                if val is None:
+                    picker.sigmas.append(None)
+                    continue
+                if isinstance(val, str):
+                    val = val.strip()
+                    if val == "":
+                        picker.sigmas.append(None)
+                        continue
+                try:
+                    picker.sigmas.append(float(val))
+                except Exception:
+                    picker.sigmas.append(None)
+        else:
+            picker.sigmas = [None] * len(picker.points)
         for (x, y), lab in zip(picker.points, picker.labels):
             color = "g" if lab is not None else "r"
             (marker,) = ax.plot(
@@ -788,20 +921,27 @@ class PointPicker:
         ax.figure.canvas.draw_idle()
         return picker
 
-    def to_dict(self) -> dict[tuple[int, int], list[tuple[float, float]]]:
+    def to_dict(
+        self, *, include_sigma: bool = True
+    ) -> dict[tuple[int, int], list[tuple[float, float] | tuple[float, float, Optional[float]]]]:
         """
-        Return a dict mapping (i, j) labels to lists of (x, y) coordinates
+        Return a dict mapping (i, j) labels to lists of (x, y[, sigma]) coordinates
         for the points loaded in this project. Unlabeled points are skipped.
+        Set include_sigma=True to retrieve sigma values alongside coordinates.
         """
         data: dict[tuple[int, int], list[tuple[float, float]]] = {}
-        for (x, y), lab in zip(self.points, self.labels):
+        for (x, y), lab, sigma in zip(self.points, self.labels, self.sigmas):
             if lab is None:
                 continue
             if isinstance(lab, np.ndarray):
                 key = tuple(int(val) for val in lab)
             else:
                 key = lab
-            data.setdefault(key, []).append((float(x), float(y)))
+            if include_sigma:
+                sigma_val = float(sigma) if sigma is not None else None
+                data.setdefault(key, []).append((float(x), float(y), sigma_val))
+            else:
+                data.setdefault(key, []).append((float(x), float(y)))
         return data
 
 
