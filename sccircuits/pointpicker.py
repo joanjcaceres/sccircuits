@@ -113,6 +113,21 @@ class PointPicker:
         self._update_title()
 
     # ------------------------------------------------------------------
+    def _set_marker_color(self, idx: int):
+        """Apply marker color according to label/sigma availability."""
+        if idx < 0 or idx >= len(self._markers):
+            return
+        lab = self.labels[idx] if idx < len(self.labels) else None
+        sigma = self.sigmas[idx] if idx < len(self.sigmas) else None
+        if lab is None:
+            color = "r"
+        else:
+            color = "g" if sigma is not None else "orange"
+        marker = self._markers[idx]
+        marker.set_markerfacecolor(color)
+        marker.set_markeredgecolor(color)
+
+    # ------------------------------------------------------------------
     # Widget helper for tagging
     # ------------------------------------------------------------------
     def _build_tag_widget(self):
@@ -126,7 +141,7 @@ class PointPicker:
             j_field = _ipyw.IntText(
                 description="j:", layout=_ipyw.Layout(width="140px")
             )
-            sigma_field = _ipyw.FloatText(
+            sigma_field = _ipyw.Text(
                 description="sigma:", layout=_ipyw.Layout(width="160px")
             )
             # Prefill fields: if the clicked point already has a label/sigma, show it;
@@ -149,7 +164,9 @@ class PointPicker:
             if initial_sigma is None:
                 initial_sigma = self._current_sigma
             if initial_sigma is not None:
-                sigma_field.value = float(initial_sigma)
+                sigma_field.value = f"{initial_sigma:g}"
+            else:
+                sigma_field.value = ""
 
             btn = _ipyw.Button(description="OK", layout=_ipyw.Layout(width="80px"))
             remove_btn = _ipyw.Button(description="Remove Tag", layout=_ipyw.Layout(width="120px"))
@@ -178,30 +195,37 @@ class PointPicker:
                 try:
                     i = int(i_field.value)
                     j = int(j_field.value)
-                    sigma_val = float(sigma_field.value)
+                    sigma_raw = str(sigma_field.value).strip()
+                    if sigma_raw:
+                        sigma_val = float(sigma_raw)
+                    else:
+                        sigma_val = None
                 except Exception:
                     with lbl_out:
                         _ipy_clear()
                         print("Valores inválidos.")
                     return
-                if sigma_val <= 0:
+                if sigma_val is not None and sigma_val <= 0:
                     with lbl_out:
                         _ipy_clear()
-                        print("sigma debe ser > 0.")
+                        print("sigma debe ser > 0 o dejar vacío.")
                     return
                 self.labels[idx] = (i, j)
                 self._current_label = (i, j)
                 self.sigmas[idx] = sigma_val
                 self._current_sigma = sigma_val
-                # update marker color to green for tagged point
-                m = self._markers[idx]
-                m.set_markerfacecolor("g")
-                m.set_markeredgecolor("g")
+                # update marker color depending on sigma availability
+                self._set_marker_color(idx)
                 self.ax.figure.canvas.draw_idle()
                 self._pending_tag_idx = None
                 with lbl_out:
                     _ipy_clear()
-                    print(f"Punto #{idx} etiquetado con ({i},{j}) y sigma={sigma_val}")
+                    if sigma_val is None:
+                        print(f"Punto #{idx} etiquetado con ({i},{j}) sin sigma")
+                    else:
+                        print(
+                            f"Punto #{idx} etiquetado con ({i},{j}) y sigma={sigma_val}"
+                        )
                 # close widget after labeling
                 box.close()
                 self._widget_box = None
@@ -216,9 +240,7 @@ class PointPicker:
                 self.labels[idx] = None  # Remove the tag
                 self.sigmas[idx] = None
                 # update marker color to red for unlabeled point
-                m = self._markers[idx]
-                m.set_markerfacecolor("r")
-                m.set_markeredgecolor("r")
+                self._set_marker_color(idx)
                 self.ax.figure.canvas.draw_idle()
                 with lbl_out:
                     _ipy_clear()
@@ -226,7 +248,7 @@ class PointPicker:
                 # Clear the text boxes
                 i_field.value = 0
                 j_field.value = 0
-                sigma_field.value = 0.0
+                sigma_field.value = ""
                 self._pending_tag_idx = None
                 # close widget after removing tag
                 box.close()
@@ -273,6 +295,8 @@ class PointPicker:
             sigma_initial = self._current_sigma
         if sigma_initial is not None:
             sigma_txt.set_val(f"{sigma_initial:g}")
+        else:
+            sigma_txt.set_val("")
 
         btn = Button(self._mpl_button_ax, "OK")
         remove_btn = Button(self._mpl_remove_ax, "Remove Tag")
@@ -283,23 +307,37 @@ class PointPicker:
             try:
                 i = int(i_txt.text.strip())
                 j = int(j_txt.text.strip())
-                sigma_val = float(sigma_txt.text.strip())
             except Exception:
                 print("Invalid format. Please enter integers in both i and j fields.")
                 return
-            if sigma_val <= 0:
-                print("Invalid sigma. Please enter a positive value.")
-                return
+            sigma_raw = sigma_txt.text.strip()
+            sigma_val: Optional[float]
+            if sigma_raw:
+                try:
+                    sigma_val = float(sigma_raw)
+                except Exception:
+                    print(
+                        "Invalid sigma. Please enter a numeric value or leave blank."
+                    )
+                    return
+                if sigma_val <= 0:
+                    print("Invalid sigma. Enter a positive value or leave blank.")
+                    return
+            else:
+                sigma_val = None
             idx = self._pending_tag_idx
             self.labels[idx] = (i, j)
             self._current_label = (i, j)
             self.sigmas[idx] = sigma_val
             self._current_sigma = sigma_val
-            m = self._markers[idx]
-            m.set_markerfacecolor("g")
-            m.set_markeredgecolor("g")
+            self._set_marker_color(idx)
             self.ax.figure.canvas.draw_idle()
-            print(f"Point #{idx} labeled as ({i}, {j}) with sigma={sigma_val:.4g} ✓")
+            if sigma_val is None:
+                print(f"Point #{idx} labeled as ({i}, {j}) without sigma ✓")
+            else:
+                print(
+                    f"Point #{idx} labeled as ({i}, {j}) with sigma={sigma_val:.4g} ✓"
+                )
 
             # Don't close the widgets - keep them open for next tagging
             # Just reset the pending index
@@ -314,9 +352,7 @@ class PointPicker:
             idx = self._pending_tag_idx
             self.labels[idx] = None  # Remove the tag
             self.sigmas[idx] = None
-            m = self._markers[idx]
-            m.set_markerfacecolor("r")  # Set back to red (unlabeled)
-            m.set_markeredgecolor("r")
+            self._set_marker_color(idx)
             self.ax.figure.canvas.draw_idle()
             print(f"Point #{idx} tag removed ✓")
 
@@ -516,6 +552,7 @@ class PointPicker:
 
         (marker,) = self.ax.plot(x, y, "ro", markersize=6)
         self._markers.append(marker)
+        self._set_marker_color(len(self._markers) - 1)
         self.ax.figure.canvas.draw_idle()
         print(f"Added → ({x:.2f}, {y:.2f})")
 
@@ -572,7 +609,9 @@ class PointPicker:
                     else self._current_sigma
                 )
                 if sigma_val is not None:
-                    sigma_field.value = float(sigma_val)
+                    sigma_field.value = f"{sigma_val:g}"
+                else:
+                    sigma_field.value = ""
                 # Provide user feedback inside the widget
                 with out:
                     _ipy_clear()
@@ -583,7 +622,7 @@ class PointPicker:
                     )
 
             print(
-                "Please enter i, j and sigma in the widget and press OK to tag point #{}, or Remove Tag to remove label".format(
+                "Please enter i, j and optional sigma in the widget and press OK to tag point #{}, or Remove Tag to remove label".format(
                     idx
                 )
             )
@@ -614,7 +653,7 @@ class PointPicker:
         else:
             print(f"Point #{idx} at ({x:.2f}, {y:.2f}) currently unlabeled")
         print(
-            "Enter i and j values in the separate text boxes below the figure and press Enter or click OK."
+            "Enter i, j and optional sigma in the text boxes below the figure and press Enter or click OK."
         )
 
     def _index_near(self, event) -> Optional[int]:
@@ -908,12 +947,10 @@ class PointPicker:
                     picker.sigmas.append(None)
         else:
             picker.sigmas = [None] * len(picker.points)
-        for (x, y), lab in zip(picker.points, picker.labels):
-            color = "g" if lab is not None else "r"
-            (marker,) = ax.plot(
-                x, y, "o", markersize=6, markerfacecolor=color, markeredgecolor=color
-            )
+        for idx, (x, y) in enumerate(picker.points):
+            (marker,) = ax.plot(x, y, "o", markersize=6)
             picker._markers.append(marker)
+            picker._set_marker_color(idx)
         if "figure" in data.files and data["figure"].size > 0:
             buf = io.BytesIO(data["figure"].tobytes())
             img = mpimg.imread(buf, format="png")
