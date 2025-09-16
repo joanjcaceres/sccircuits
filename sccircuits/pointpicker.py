@@ -1,11 +1,16 @@
 import csv
 import io
-from typing import Optional, Tuple
-
+from typing import Dict, List, Optional, Tuple, Union
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.widgets import Button, TextBox
+
+# Type alias for load_csv_to_dict return type
+PointDict = Dict[
+    Tuple[int, int],
+    List[Union[Tuple[float, float], Tuple[float, float, Optional[float]]]],
+]
 
 # Optional: interactive label input for Jupyter widgets
 try:
@@ -169,7 +174,9 @@ class PointPicker:
                 sigma_field.value = ""
 
             btn = _ipyw.Button(description="OK", layout=_ipyw.Layout(width="80px"))
-            remove_btn = _ipyw.Button(description="Remove Tag", layout=_ipyw.Layout(width="120px"))
+            remove_btn = _ipyw.Button(
+                description="Remove Tag", layout=_ipyw.Layout(width="120px")
+            )
             lbl_out = _ipyw.Output(layout=_ipyw.Layout(font_size="12px"))
             box = _ipyw.VBox(
                 [_ipyw.HBox([i_field, j_field, sigma_field, btn, remove_btn]), lbl_out]
@@ -316,9 +323,7 @@ class PointPicker:
                 try:
                     sigma_val = float(sigma_raw)
                 except Exception:
-                    print(
-                        "Invalid sigma. Please enter a numeric value or leave blank."
-                    )
+                    print("Invalid sigma. Please enter a numeric value or leave blank.")
                     return
                 if sigma_val <= 0:
                     print("Invalid sigma. Enter a positive value or leave blank.")
@@ -788,7 +793,7 @@ class PointPicker:
     def set_current_sigma(self, sigma: float | None):
         """Define the sigma pre-filled when tagging new points. Use None to clear."""
         if sigma is not None and sigma <= 0:
-            raise ValueError("sigma must be positive when provided")
+            raise ValueError(f"sigma must be positive when provided, got {sigma}")
         self._current_sigma = sigma
 
     def summary(self):
@@ -835,11 +840,13 @@ class PointPicker:
                 writer = csv.writer(f)
                 writer.writerow(["x", "y", "sigma"])
                 for (x, y), sigma in zip(self.points, self.sigmas):
-                    writer.writerow([
-                        float(x),
-                        float(y),
-                        "" if sigma is None else float(sigma),
-                    ])
+                    writer.writerow(
+                        [
+                            float(x),
+                            float(y),
+                            "" if sigma is None else float(sigma),
+                        ]
+                    )
             print(f"Saved {self.points.shape[0]} points to {filename}")
             return
 
@@ -871,10 +878,10 @@ class PointPicker:
         filename: str,
         *,
         include_sigma: bool = False,
-    ) -> dict[tuple[int, int], list[tuple[float, float] | tuple[float, float, Optional[float]]]]:
+    ) -> PointDict:
         """
         Load points from a CSV file saved by PointPicker.save_to_csv (axis_lock mode).
-        Returns a dict mapping (i, j) tuples to lists of (x, y[, sigma]) coordinate tuples.
+        data: dict[tuple[int, int], list[tuple[float, float] | tuple[float, float, Optional[float]]]] = {}
         Set include_sigma=True to obtain sigma values when available.
         """
         data: dict[tuple[int, int], list] = {}
@@ -960,10 +967,13 @@ class PointPicker:
 
     def to_dict(
         self, *, include_sigma: bool = True
-    ) -> dict[tuple[int, int], list[tuple[float, float] | tuple[float, float, Optional[float]]]]:
+    ) -> dict[
+        tuple[int, int],
+        list[tuple[float, float] | tuple[float, float, Optional[float]]],
+    ]:
         """
         Return a dict mapping (i, j) labels to lists of (x, y[, sigma]) coordinates
-        for the points loaded in this project. Unlabeled points are skipped.
+        data: dict[tuple[int, int], list[tuple[float, float] | tuple[float, float, Optional[float]]]] = {}
         Set include_sigma=True to retrieve sigma values alongside coordinates.
         """
         data: dict[tuple[int, int], list[tuple[float, float]]] = {}

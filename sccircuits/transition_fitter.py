@@ -37,7 +37,7 @@ class DataPoint:
         if self.sigma is not None:
             self.sigma = float(self.sigma)
             if self.sigma <= 0:
-                raise ValueError("sigma must be positive when provided")
+                raise ValueError(f"sigma must be positive when provided, got {self.sigma}")
 
 
 class TransitionFitter:
@@ -45,6 +45,8 @@ class TransitionFitter:
     Transitions (i, j) and (j, i) are treated equivalently by normalizing keys.
     Supports multiple optimization methods: least_squares, differential_evolution, or custom optimizers.
     """
+
+    DEFAULT_SIGMA = 1.0
 
     def __init__(
         self,
@@ -402,7 +404,7 @@ class TransitionFitter:
             for dp, tv in zip(data_points, theo_values):
                 y_exp.append(dp.value)
                 y_theo.append(tv)
-                sigma_list.append(dp.sigma if dp.sigma is not None else 1.0)
+                sigma_list.append(dp.sigma if dp.sigma is not None else self.DEFAULT_SIGMA)
 
         y_exp_array = np.array(y_exp)
         y_theo_array = np.array(y_theo)
@@ -809,7 +811,7 @@ class TransitionFitter:
             theo_array = np.array(theoretical)
             residuals = theo_array - exp_array
             sigma_array = np.array(
-                [dp.sigma if dp.sigma is not None else 1.0 for dp in data_points],
+                [dp.sigma if dp.sigma is not None else self.DEFAULT_SIGMA for dp in data_points],
                 dtype=float,
             )
 
@@ -1126,7 +1128,7 @@ class TransitionFitter:
                             dp.value,
                             float(tv),
                             float(tv - dp.value),
-                            dp.sigma if dp.sigma is not None else "",
+                            dp.sigma if dp.sigma is not None else self.DEFAULT_SIGMA,
                         ]
                     )
         print(f"Basic results saved to CSV file: {filepath}")
