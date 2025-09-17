@@ -141,6 +141,8 @@ class CircuitGraphApp:
         self.focus_node: Optional[int] = None
         self.dragging_ground_edge: Optional[int] = None
         self.ground_drag_offset: Tuple[float, float] = (0.0, 0.0)
+        self.selected_nodes: set[int] = set()
+        self.view_scale: float = 1.0
         self.status_var = tk.StringVar(value="Pulsa 'n' para crear nodos, 'c' para conectar.")
 
         self._build_ui()
@@ -153,6 +155,12 @@ class CircuitGraphApp:
         self.canvas = tk.Canvas(self.root, bg="white")
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.canvas.bind("<Button-1>", self._handle_canvas_click)
+        self.canvas.bind("<Control-MouseWheel>", self._handle_zoom)
+        self.canvas.bind("<Control-Button-4>", lambda event: self._handle_zoom(event, factor=1.1))
+        self.canvas.bind("<Control-Button-5>", lambda event: self._handle_zoom(event, factor=0.9))
+        self.canvas.bind("<ButtonPress-2>", self._start_pan)
+        self.canvas.bind("<B2-Motion>", self._perform_pan)
+        self.canvas.bind("<ButtonRelease-2>", self._end_pan)
 
         overlay = ttk.Frame(self.root, padding=8)
         overlay.place(relx=0.02, rely=0.02)
@@ -166,6 +174,18 @@ class CircuitGraphApp:
         ttk.Button(overlay, text="Reiniciar", command=self._reset_all).grid(row=1, column=3, padx=2)
 
         ttk.Button(overlay, text="Copiar snippet", command=self._copy_snippet).grid(row=2, column=0, columnspan=4, sticky="ew", pady=(6, 0))
+        ttk.Button(overlay, text="Duplicar seleccion", command=self._duplicate_selection).grid(row=3, column=0, columnspan=4, sticky="ew", pady=(6, 0))
+
+    def _current_node_radius(self) -> float:
+        return self.NODE_RADIUS * self.view_scale
+
+    def _current_edge_center_radius(self) -> float:
+        return self.EDGE_CENTER_RADIUS * self.view_scale
+
+    def _update_scrollregion(self) -> None:
+        bbox = self.canvas.bbox("all")
+        if bbox is not None:
+            self.canvas.configure(scrollregion=bbox)
 
     def _bind_shortcuts(self) -> None:
         self.root.bind("n", lambda _: self._set_mode("node"))
@@ -185,8 +205,56 @@ class CircuitGraphApp:
                 self._update_status("Haz click en el fondo para agregar un nodo nuevo.")
                 return
         self._set_focus_node(None)
+        self._clear_selection()
         name = self._generate_default_node_name()
-        self._add_node(event.x, event.y, name)
+        new_node_id = self._add_node(event.x, event.y, name)
+        self.selected_nodes = {new_node_id}
+        self._set_focus_node(new_node_id)
+
+    def _handle_zoom(self, event: tk.Event, factor: Optional[float] = None) -> None:
+        if factor is None:
+            if event.delta == 0:
+                return
+            factor = 1.1 if event.delta > 0 else 0.9
+        new_scale = self.view_scale * factor
+        min_scale, max_scale = 0.3, 4.0
+        if new_scale < min_scale:
+            factor = min_scale / self.view_scale
+            new_scale = min_scale
+        elif new_scale > max_scale:
+            factor = max_scale / self.view_scale
+            new_scale = max_scale
+
+        anchor_x = self.canvas.canvasx(event.x)
+        anchor_y = self.canvas.canvasy(event.y)
+        self.canvas.scale("all", anchor_x, anchor_y, factor, factor)
+
+        for node in self.nodes.values():
+            node.x = anchor_x + (node.x - anchor_x) * factor
+            node.y = anchor_y + (node.y - anchor_y) * factor
+
+        for edge in self.edges.values():
+            if edge.is_ground:
+                edge.ground_offset_x *= factor
+                edge.ground_offset_y *= factor
+
+        self.view_scale = new_scale
+
+        for node_id, node in self.nodes.items():
+            self._move_node(node_id, node.x, node.y)
+
+        self._refresh_all_node_appearances()
+        self._update_scrollregion()
+
+    def _start_pan(self, event: tk.Event) -> None:
+        self.canvas.scan_mark(event.x, event.y)
+
+    def _perform_pan(self, event: tk.Event) -> None:
+        self.canvas.scan_dragto(event.x, event.y, gain=1)
+
+    def _end_pan(self, event: tk.Event) -> None:
+        # No additional state to update, but method kept for completeness.
+        pass
 
     def _generate_default_node_name(self) -> str:
         existing_numbers = {
@@ -211,18 +279,19 @@ class CircuitGraphApp:
         node_id = self.node_counter
         self.node_counter += 1
         tag = f"node_{node_id}"
+        radius = self._current_node_radius()
         circle = self.canvas.create_oval(
-            x - self.NODE_RADIUS,
-            y - self.NODE_RADIUS,
-            x + self.NODE_RADIUS,
-            y + self.NODE_RADIUS,
+            x - radius,
+            y - radius,
+            x + radius,
+            y + radius,
             fill=color,
             outline="black",
             width=2,
             tags=("node", tag),
         )
         label = self.canvas.create_text(
-            x + self.NODE_RADIUS + 6,
+            x + radius + 6,
             y,
             text=name,
             fill="#212121",
@@ -253,6 +322,7 @@ class CircuitGraphApp:
         self.nodes[node_id] = Node(node_id, name, x, y, circle, label)
         if not silent:
             self._update_status(f"Nodo {name} creado. Pulsa 'c' para conectar.")
+        self._update_scrollregion()
         return node_id
 
     def _handle_node_press(self, event: tk.Event, node_id: int) -> None:
@@ -262,8 +332,12 @@ class CircuitGraphApp:
         if self.mode == "edge":
             self._handle_edge_mode_click(node_id)
             return
-        if self.mode != "edge":
-            self._set_focus_node(node_id)
+        shift_held = bool(event.state & 0x0001)
+        if shift_held:
+            self._toggle_selection(node_id)
+        else:
+            self._ensure_selected(node_id)
+        self._set_focus_node(node_id)
         self.dragging_node = node_id
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
@@ -276,7 +350,7 @@ class CircuitGraphApp:
     def _handle_edge_mode_click(self, node_id: int) -> None:
         if self.selected_node is None:
             self.selected_node = node_id
-            self._highlight_node(node_id, True)
+            self._set_focus_node(node_id)
             self._update_status("Selecciona el segundo nodo para crear la conexion.")
             return
         if self.selected_node == node_id:
@@ -284,7 +358,7 @@ class CircuitGraphApp:
             return
         first = self.selected_node
         second = node_id
-        self._highlight_node(first, False)
+        self._set_focus_node(None)
         self.selected_node = None
         self._create_edge(first, second)
 
@@ -363,6 +437,7 @@ class CircuitGraphApp:
         edge.ground_offset_x = new_end_x - node.x
         edge.ground_offset_y = new_end_y - node.y
         self._update_edge_geometry(edge_id)
+        self._update_scrollregion()
 
     def _handle_ground_release(self, event: tk.Event, edge_id: int) -> None:
         if self.dragging_ground_edge != edge_id:
@@ -374,17 +449,19 @@ class CircuitGraphApp:
         node = self.nodes[node_id]
         node.x = x
         node.y = y
+        radius = self._current_node_radius()
         self.canvas.coords(
             node.circle_id,
-            x - self.NODE_RADIUS,
-            y - self.NODE_RADIUS,
-            x + self.NODE_RADIUS,
-            y + self.NODE_RADIUS,
+            x - radius,
+            y - radius,
+            x + radius,
+            y + radius,
         )
-        self.canvas.coords(node.label_id, x + self.NODE_RADIUS + 6, y)
+        self.canvas.coords(node.label_id, x + radius + 6, y)
         for edge_id, edge in self.edges.items():
             if node_id in edge.nodes:
                 self._update_edge_geometry(edge_id)
+        self._update_scrollregion()
 
     def _update_edge_geometry(self, edge_id: int) -> None:
         edge = self.edges[edge_id]
@@ -400,7 +477,7 @@ class CircuitGraphApp:
             self.canvas.coords(edge.line_id, x, y, end_x, end_y)
             mid_x = (x + end_x) / 2
             mid_y = (y + end_y) / 2
-            radius = self.EDGE_CENTER_RADIUS
+            radius = self._current_edge_center_radius()
             if edge.center_circle_id is not None:
                 self.canvas.coords(
                     edge.center_circle_id,
@@ -428,7 +505,7 @@ class CircuitGraphApp:
         self.canvas.coords(edge.line_id, node_a.x, node_a.y, node_b.x, node_b.y)
         center_x = (node_a.x + node_b.x) / 2
         center_y = (node_a.y + node_b.y) / 2
-        radius = self.EDGE_CENTER_RADIUS
+        radius = self._current_edge_center_radius()
         if edge.center_circle_id is not None:
             self.canvas.coords(
                 edge.center_circle_id,
@@ -459,8 +536,12 @@ class CircuitGraphApp:
 
     def _delete_focused_node(self) -> None:
         if self.focus_node is None:
-            self._update_status("Selecciona un nodo y presiona Supr para eliminarlo.")
-            return
+            if self.selected_nodes:
+                candidate = next(iter(self.selected_nodes))
+                self._set_focus_node(candidate)
+            else:
+                self._update_status("Selecciona un nodo y presiona Supr para eliminarlo.")
+                return
         node_id = self.focus_node
         node = self.nodes.get(node_id)
         if node is None:
@@ -474,11 +555,14 @@ class CircuitGraphApp:
         node = self.nodes.pop(node_id, None)
         if node is None:
             return
+        self.selected_nodes.discard(node_id)
         self.canvas.delete(node.circle_id)
         self.canvas.delete(node.label_id)
         edges_to_remove = [edge_id for edge_id, edge in self.edges.items() if node_id in edge.nodes]
         for edge_id in edges_to_remove:
             self._remove_edge(edge_id)
+        self._update_scrollregion()
+        self._refresh_all_node_appearances()
 
     def _remove_edge(self, edge_id: int) -> None:
         edge = self.edges.pop(edge_id, None)
@@ -492,6 +576,101 @@ class CircuitGraphApp:
         if edge.ground_marker_id is not None:
             self.canvas.delete(edge.ground_marker_id)
         self.canvas.delete(edge.label_id)
+        self._update_scrollregion()
+
+    def _duplicate_selection(self) -> None:
+        if not self.selected_nodes:
+            messagebox.showinfo("Seleccion vacia", "Selecciona al menos un nodo para duplicar.", parent=self.root)
+            return
+
+        selected_nodes = sorted(self.selected_nodes)
+
+        copies = simpledialog.askinteger(
+            "Duplicar seleccion",
+            "Cantidad de replicas:",
+            initialvalue=1,
+            minvalue=1,
+            parent=self.root,
+        )
+        if copies is None:
+            return
+
+        dx = simpledialog.askfloat(
+            "Desplazamiento en X",
+            "Desplazamiento horizontal por replica (px):",
+            initialvalue=80.0,
+            parent=self.root,
+        )
+        if dx is None:
+            return
+
+        dy = simpledialog.askfloat(
+            "Desplazamiento en Y",
+            "Desplazamiento vertical por replica (px):",
+            initialvalue=0.0,
+            parent=self.root,
+        )
+        if dy is None:
+            return
+
+        original_edges = [
+            edge
+            for edge in self.edges.values()
+            if (
+                (edge.is_ground and edge.nodes[0] in selected_nodes)
+                or (not edge.is_ground and edge.nodes[0] in selected_nodes and edge.nodes[1] in selected_nodes)
+            )
+        ]
+
+        all_new_nodes: list[int] = []
+
+        for replica_index in range(1, copies + 1):
+            mapping: Dict[int, int] = {}
+            shift_x = dx * replica_index
+            shift_y = dy * replica_index
+
+            for node_id in selected_nodes:
+                original = self.nodes[node_id]
+                new_name = self._generate_default_node_name()
+                new_node_id = self._add_node(
+                    original.x + shift_x,
+                    original.y + shift_y,
+                    new_name,
+                    silent=True,
+                )
+                mapping[node_id] = new_node_id
+                all_new_nodes.append(new_node_id)
+
+            for edge in original_edges:
+                params = EdgeParameters(
+                    capacitance_expr=edge.capacitance_expr,
+                    capacitance_text=edge.capacitance_text,
+                    inductance_expr=edge.inductance_expr,
+                    inductance_text=edge.inductance_text,
+                )
+                if edge.is_ground:
+                    source_id = mapping.get(edge.nodes[0])
+                    if source_id is not None:
+                        self._instantiate_ground_edge(
+                            source_id,
+                            params,
+                            offset_x=edge.ground_offset_x,
+                            offset_y=edge.ground_offset_y,
+                        )
+                else:
+                    first_new = mapping.get(edge.nodes[0])
+                    second_new = mapping.get(edge.nodes[1])
+                    if first_new is not None and second_new is not None:
+                        self._instantiate_edge(first_new, second_new, params)
+
+        self.selected_nodes = set(all_new_nodes)
+        if all_new_nodes:
+            self._set_focus_node(all_new_nodes[-1])
+        else:
+            self._set_focus_node(None)
+        self._refresh_all_node_appearances()
+        self._update_scrollregion()
+        self._update_status("Duplicacion completada.")
 
     def _apply_edge_parameters(self, edge: Edge, params: EdgeParameters) -> None:
         edge.capacitance_expr = params.capacitance_expr
@@ -531,23 +710,7 @@ class CircuitGraphApp:
         self.canvas.itemconfigure(node.label_id, text=new_name)
         self._update_status(f"Nodo renombrado a {new_name}.")
 
-    def _create_edge(self, first: int, second: int) -> None:
-        first_name = self.nodes[first].name
-        second_name = self.nodes[second].name
-        existing = self._find_edge(first, second)
-        if existing is not None:
-            if not messagebox.askyesno(
-                "Enlace existente",
-                "Ya existe una conexion entre estos nodos.\n¿Deseas crear otra en paralelo?",
-                parent=self.root,
-            ):
-                self._update_status("Se mantuvo la conexion original.")
-                return
-        dialog = EdgeDialog(self.root, first_name, second_name)
-        if dialog.value is None:
-            self._update_status("Conexion cancelada.")
-            return
-        params = dialog.value
+    def _instantiate_edge(self, first: int, second: int, params: EdgeParameters) -> int:
         capacitance_expr = params.capacitance_expr
         capacitance_text = params.capacitance_text
         inductance_expr = params.inductance_expr
@@ -561,9 +724,9 @@ class CircuitGraphApp:
         x1, y1 = self.nodes[first].x, self.nodes[first].y
         x2, y2 = self.nodes[second].x, self.nodes[second].y
         line = self.canvas.create_line(x1, y1, x2, y2, width=2, fill="#424242", tags=("edge", tag))
+        radius = self._current_edge_center_radius()
         center_x = (x1 + x2) / 2
         center_y = (y1 + y2) / 2
-        radius = self.EDGE_CENTER_RADIUS
         circle = self.canvas.create_oval(
             center_x - radius,
             center_y - radius,
@@ -577,12 +740,7 @@ class CircuitGraphApp:
         label = self.canvas.create_text(
             center_x,
             center_y,
-            text=self._edge_label(
-                capacitance_expr,
-                capacitance_text,
-                inductance_expr,
-                inductance_text,
-            ),
+            text="",
             fill="#212121",
             justify=tk.CENTER,
             tags=("edge", tag),
@@ -607,9 +765,36 @@ class CircuitGraphApp:
             lambda event, eid=edge_id: self._edit_edge(eid),
         )
         self._apply_edge_parameters(self.edges[edge_id], params)
+        self._update_scrollregion()
+        return edge_id
+
+    def _create_edge(self, first: int, second: int) -> None:
+        first_name = self.nodes[first].name
+        second_name = self.nodes[second].name
+        existing = self._find_edge(first, second)
+        if existing is not None:
+            if not messagebox.askyesno(
+                "Enlace existente",
+                "Ya existe una conexion entre estos nodos.\n¿Deseas crear otra en paralelo?",
+                parent=self.root,
+            ):
+                self._update_status("Se mantuvo la conexion original.")
+                return
+        dialog = EdgeDialog(self.root, first_name, second_name)
+        if dialog.value is None:
+            self._update_status("Conexion cancelada.")
+            return
+        self._instantiate_edge(first, second, dialog.value)
         self._update_status("Conexion creada. Pulsa 'c' para otra o Escape para salir del modo.")
 
-    def _create_ground_edge(self, node_id: int, params: EdgeParameters) -> None:
+    def _instantiate_ground_edge(
+        self,
+        node_id: int,
+        params: EdgeParameters,
+        *,
+        offset_x: float = 0.0,
+        offset_y: Optional[float] = None,
+    ) -> int:
         capacitance_expr = params.capacitance_expr
         capacitance_text = params.capacitance_text
         inductance_expr = params.inductance_expr
@@ -623,8 +808,10 @@ class CircuitGraphApp:
         node = self.nodes[node_id]
         start_x = node.x
         start_y = node.y
-        end_x = start_x
-        end_y = start_y + self.GROUND_LINE_LENGTH
+        if offset_y is None:
+            offset_y = self.GROUND_LINE_LENGTH
+        end_x = start_x + offset_x
+        end_y = start_y + offset_y
         line = self.canvas.create_line(
             start_x,
             start_y,
@@ -636,7 +823,7 @@ class CircuitGraphApp:
         )
         mid_x = (start_x + end_x) / 2
         mid_y = (start_y + end_y) / 2
-        radius = self.EDGE_CENTER_RADIUS
+        radius = self._current_edge_center_radius()
         circle = self.canvas.create_oval(
             mid_x - radius,
             mid_y - radius,
@@ -685,8 +872,8 @@ class CircuitGraphApp:
             l_inverse_expr=l_inverse_expr,
             is_ground=True,
             ground_marker_id=triangle,
-            ground_offset_x=0.0,
-            ground_offset_y=self.GROUND_LINE_LENGTH,
+            ground_offset_x=offset_x,
+            ground_offset_y=offset_y,
         )
         self.canvas.tag_bind(
             tag,
@@ -710,7 +897,11 @@ class CircuitGraphApp:
                 lambda event, eid=edge_id: self._handle_ground_release(event, eid),
             )
         self._apply_edge_parameters(self.edges[edge_id], params)
+        self._update_scrollregion()
+        return edge_id
 
+    def _create_ground_edge(self, node_id: int, params: EdgeParameters) -> None:
+        self._instantiate_ground_edge(node_id, params)
     def _edge_label(
         self,
         capacitance_expr: Optional[sp.Expr],
@@ -754,23 +945,53 @@ class CircuitGraphApp:
                     return edge
         return None
 
-    def _highlight_node(self, node_id: int, active: bool) -> None:
-        if node_id not in self.nodes:
+    def _refresh_node_appearance(self, node_id: int) -> None:
+        node = self.nodes.get(node_id)
+        if node is None:
             return
-        color = "#d32f2f" if active else "#1976d2"
-        self.canvas.itemconfigure(self.nodes[node_id].circle_id, fill=color)
+        if node_id == self.focus_node:
+            color = "#d32f2f"
+        elif node_id in self.selected_nodes:
+            color = "#ff9800"
+        else:
+            color = "#1976d2"
+        self.canvas.itemconfigure(node.circle_id, fill=color)
+
+    def _refresh_all_node_appearances(self) -> None:
+        for node_id in self.nodes:
+            self._refresh_node_appearance(node_id)
+
+    def _clear_selection(self) -> None:
+        if not self.selected_nodes:
+            return
+        for node_id in list(self.selected_nodes):
+            self.selected_nodes.discard(node_id)
+            self._refresh_node_appearance(node_id)
+
+    def _toggle_selection(self, node_id: int) -> None:
+        if node_id in self.selected_nodes:
+            self.selected_nodes.remove(node_id)
+        else:
+            self.selected_nodes.add(node_id)
+        self._refresh_node_appearance(node_id)
+
+    def _ensure_selected(self, node_id: int) -> None:
+        if node_id not in self.selected_nodes or len(self.selected_nodes) > 1:
+            self._clear_selection()
+            self.selected_nodes.add(node_id)
+            self._refresh_node_appearance(node_id)
 
     def _set_focus_node(self, node_id: Optional[int]) -> None:
-        if self.focus_node is not None and self.focus_node in self.nodes:
-            if self.focus_node != self.selected_node:
-                self._highlight_node(self.focus_node, False)
+        previous = self.focus_node
         self.focus_node = node_id
-        if node_id is not None and node_id in self.nodes and node_id != self.selected_node:
-            self._highlight_node(node_id, True)
+        if previous is not None:
+            self._refresh_node_appearance(previous)
+        if node_id is not None:
+            self._refresh_node_appearance(node_id)
 
     def _set_mode(self, mode: Optional[str]) -> None:
         if self.selected_node is not None:
-            self._highlight_node(self.selected_node, False)
+            self._set_focus_node(None)
         self.selected_node = None
         self.mode = mode
         if mode == "node":
