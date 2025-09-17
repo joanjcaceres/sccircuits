@@ -595,23 +595,16 @@ class CircuitGraphApp:
         if copies is None:
             return
 
-        dx = simpledialog.askfloat(
-            "Desplazamiento en X",
-            "Desplazamiento horizontal por replica (px):",
-            initialvalue=80.0,
-            parent=self.root,
-        )
-        if dx is None:
-            return
+        min_x = min(self.nodes[nid].x for nid in selected_nodes)
+        max_x = max(self.nodes[nid].x for nid in selected_nodes)
+        min_y = min(self.nodes[nid].y for nid in selected_nodes)
+        max_y = max(self.nodes[nid].y for nid in selected_nodes)
 
-        dy = simpledialog.askfloat(
-            "Desplazamiento en Y",
-            "Desplazamiento vertical por replica (px):",
-            initialvalue=0.0,
-            parent=self.root,
-        )
-        if dy is None:
-            return
+        block_width = max_x - min_x
+        block_height = max_y - min_y
+        min_spacing = max(self._current_node_radius() * 4, 40.0 * self.view_scale)
+        dx = (block_width if block_width > 0 else self._current_node_radius() * 6) + min_spacing
+        dy = 0.0
 
         original_edges = [
             edge
@@ -636,22 +629,15 @@ class CircuitGraphApp:
             )
             boundary_nodes = [left_nodes, right_nodes]
 
-        bridging_templates: list[tuple[int, int, Edge]] = []
+        bridging_templates: list[tuple[int, int, Optional[Edge]]] = []
         if len(boundary_nodes) == 2:
             left_nodes, right_nodes = boundary_nodes
-            for right_node in right_nodes:
-                template_edge = None
-                for edge in original_edges:
-                    if edge.is_ground:
-                        continue
-                    if right_node in edge.nodes:
-                        other = edge.nodes[0] if edge.nodes[1] == right_node else edge.nodes[1]
-                        if other in left_nodes:
-                            template_edge = edge
-                            break
-                if template_edge is not None:
-                    other = template_edge.nodes[0] if template_edge.nodes[1] == right_node else template_edge.nodes[1]
-                    bridging_templates.append((right_node, other, template_edge))
+            pair_count = min(len(left_nodes), len(right_nodes))
+            for idx in range(pair_count):
+                right_node = right_nodes[idx]
+                left_node = left_nodes[idx % len(left_nodes)]
+                template_edge = self._find_template_edge(right_node, left_node, original_edges)
+                bridging_templates.append((right_node, left_node, template_edge))
 
         all_new_nodes: list[int] = []
 
@@ -703,12 +689,20 @@ class CircuitGraphApp:
                 head_new = mapping.get(left_original)
                 tail_new = mapping.get(right_original)
                 if previous_tail is not None and head_new is not None:
-                    bridge_params = EdgeParameters(
-                        capacitance_expr=template_edge.capacitance_expr,
-                        capacitance_text=template_edge.capacitance_text,
-                        inductance_expr=template_edge.inductance_expr,
-                        inductance_text=template_edge.inductance_text,
-                    )
+                    if template_edge is not None:
+                        bridge_params = EdgeParameters(
+                            capacitance_expr=template_edge.capacitance_expr,
+                            capacitance_text=template_edge.capacitance_text,
+                            inductance_expr=template_edge.inductance_expr,
+                            inductance_text=template_edge.inductance_text,
+                        )
+                    else:
+                        bridge_params = EdgeParameters(
+                            capacitance_expr=None,
+                            capacitance_text=None,
+                            inductance_expr=None,
+                            inductance_text=None,
+                        )
                     self._instantiate_edge(previous_tail, head_new, bridge_params)
                 if tail_new is not None:
                     last_tail_map[idx] = tail_new
@@ -952,6 +946,21 @@ class CircuitGraphApp:
 
     def _create_ground_edge(self, node_id: int, params: EdgeParameters) -> None:
         self._instantiate_ground_edge(node_id, params)
+
+    def _find_template_edge(
+        self, source_node: int, target_node: int, edges: list[Edge]
+    ) -> Optional[Edge]:
+        for edge in edges:
+            if edge.is_ground:
+                continue
+            if source_node in edge.nodes and target_node in edge.nodes:
+                return edge
+        for edge in edges:
+            if edge.is_ground:
+                continue
+            if source_node in edge.nodes:
+                return edge
+        return None
     def _edge_label(
         self,
         capacitance_expr: Optional[sp.Expr],
