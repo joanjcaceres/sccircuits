@@ -21,13 +21,15 @@ class Edge:
     identifier: int
     nodes: Tuple[int, int]
     line_id: int
-    center_circle_id: int
+    center_circle_id: Optional[int]
     label_id: int
     capacitance_expr: Optional[sp.Expr]
     capacitance_text: Optional[str]
     inductance_expr: Optional[sp.Expr]
     inductance_text: Optional[str]
     l_inverse_expr: Optional[sp.Expr]
+    is_ground: bool = False
+    ground_marker_id: Optional[int] = None
 
 
 @dataclass
@@ -117,6 +119,9 @@ class EdgeDialog:
 class CircuitGraphApp:
     NODE_RADIUS = 6
     EDGE_CENTER_RADIUS = 16
+    GROUND_LINE_LENGTH = 26
+    GROUND_TRIANGLE_WIDTH = 18
+    GROUND_TRIANGLE_HEIGHT = 12
 
     def __init__(self) -> None:
         self.root = tk.Tk()
@@ -129,6 +134,8 @@ class CircuitGraphApp:
         self.selected_node: Optional[int] = None
         self.dragging_node: Optional[int] = None
         self.drag_offset: Tuple[float, float] = (0.0, 0.0)
+        self.ground_node_id: Optional[int] = None
+        self.focus_node: Optional[int] = None
         self.status_var = tk.StringVar(value="Pulsa 'n' para crear nodos, 'c' para conectar.")
 
         self._build_ui()
@@ -147,18 +154,22 @@ class CircuitGraphApp:
         overlay.place(relx=0.02, rely=0.02)
 
         status_label = ttk.Label(overlay, textvariable=self.status_var)
-        status_label.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 6))
+        status_label.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 6))
 
         ttk.Button(overlay, text="Modo nodo", command=lambda: self._set_mode("node")).grid(row=1, column=0, padx=2)
         ttk.Button(overlay, text="Modo enlace", command=lambda: self._set_mode("edge")).grid(row=1, column=1, padx=2)
-        ttk.Button(overlay, text="Reiniciar", command=self._reset_all).grid(row=1, column=2, padx=2)
+        ttk.Button(overlay, text="A masa", command=lambda: self._set_mode("ground")).grid(row=1, column=2, padx=2)
+        ttk.Button(overlay, text="Reiniciar", command=self._reset_all).grid(row=1, column=3, padx=2)
 
-        ttk.Button(overlay, text="Copiar snippet", command=self._copy_snippet).grid(row=2, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        ttk.Button(overlay, text="Copiar snippet", command=self._copy_snippet).grid(row=2, column=0, columnspan=4, sticky="ew", pady=(6, 0))
 
     def _bind_shortcuts(self) -> None:
         self.root.bind("n", lambda _: self._set_mode("node"))
         self.root.bind("c", lambda _: self._set_mode("edge"))
+        self.root.bind("g", lambda _: self._set_mode("ground"))
         self.root.bind("<Escape>", lambda _: self._set_mode(None))
+        self.root.bind("<Delete>", lambda _: self._delete_focused_node())
+        self.root.bind("<BackSpace>", lambda _: self._delete_focused_node())
 
     def _handle_canvas_click(self, event: tk.Event) -> None:
         if self.mode != "node":
@@ -169,16 +180,20 @@ class CircuitGraphApp:
             if "node" in tags:
                 self._update_status("Haz click en el fondo para agregar un nodo nuevo.")
                 return
-        name = self._ask_node_name()
+        self._set_focus_node(None)
+        name = self._generate_default_node_name()
         self._add_node(event.x, event.y, name)
 
-    def _ask_node_name(self) -> str:
-        default_index = sum(1 for node in self.nodes.values() if node.name != "GND") + 1
-        default = f"N{default_index}"
-        prompt = simpledialog.askstring("Nuevo nodo", "Nombre del nodo:", initialvalue=default, parent=self.root)
-        if not prompt:
-            return default
-        return prompt.strip()
+    def _generate_default_node_name(self) -> str:
+        existing_numbers = {
+            int(node.name[1:])
+            for node in self.nodes.values()
+            if node.name.startswith("N") and node.name[1:].isdigit()
+        }
+        next_index = 1
+        while next_index in existing_numbers:
+            next_index += 1
+        return f"N{next_index}"
 
     def _add_node(
         self,
@@ -188,7 +203,7 @@ class CircuitGraphApp:
         *,
         silent: bool = False,
         color: str = "#1976d2",
-    ) -> None:
+    ) -> int:
         node_id = self.node_counter
         self.node_counter += 1
         tag = f"node_{node_id}"
@@ -234,11 +249,17 @@ class CircuitGraphApp:
         self.nodes[node_id] = Node(node_id, name, x, y, circle, label)
         if not silent:
             self._update_status(f"Nodo {name} creado. Pulsa 'c' para conectar.")
+        return node_id
 
     def _handle_node_press(self, event: tk.Event, node_id: int) -> None:
+        if self.mode == "ground":
+            self._connect_node_to_ground(node_id)
+            return
         if self.mode == "edge":
             self._handle_edge_mode_click(node_id)
             return
+        if self.mode != "edge":
+            self._set_focus_node(node_id)
         self.dragging_node = node_id
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
@@ -262,6 +283,35 @@ class CircuitGraphApp:
         self._highlight_node(first, False)
         self.selected_node = None
         self._create_edge(first, second)
+
+    def _connect_node_to_ground(self, node_id: int) -> None:
+        if self.ground_node_id is None:
+            self._update_status("No se encontro el nodo de masa.")
+            return
+        if node_id == self.ground_node_id:
+            self._update_status("Selecciona un nodo distinto de GND.")
+            return
+        existing = self._find_edge(node_id, self.ground_node_id)
+        default_cap = ""
+        default_ind = ""
+        if existing is not None:
+            default_cap = existing.capacitance_text or (
+                str(existing.capacitance_expr) if existing.capacitance_expr is not None else ""
+            )
+            default_ind = existing.inductance_text or (
+                str(existing.inductance_expr) if existing.inductance_expr is not None else ""
+            )
+        node_name = self.nodes[node_id].name
+        dialog = EdgeDialog(self.root, node_name, "GND", default_cap or None, default_ind or None)
+        if dialog.value is None:
+            self._update_status("Conexion a masa cancelada.")
+            return
+        if existing is not None:
+            self._apply_edge_parameters(existing, dialog.value)
+            self._update_status(f"Conexion a masa de {node_name} actualizada.")
+        else:
+            self._create_ground_edge(node_id, dialog.value)
+            self._update_status(f"Nodo {node_name} conectado a masa.")
 
     def _handle_node_drag(self, event: tk.Event, node_id: int) -> None:
         if self.dragging_node != node_id or self.mode == "edge":
@@ -298,19 +348,54 @@ class CircuitGraphApp:
 
     def _update_edge_geometry(self, edge_id: int) -> None:
         edge = self.edges[edge_id]
+        if edge.is_ground:
+            if self.ground_node_id is None:
+                return
+            primary_id = edge.nodes[0] if edge.nodes[1] == self.ground_node_id else edge.nodes[1]
+            node = self.nodes[primary_id]
+            x = node.x
+            y = node.y
+            line_end_y = y + self.GROUND_LINE_LENGTH
+            self.canvas.coords(edge.line_id, x, y, x, line_end_y)
+            mid_y = y + self.GROUND_LINE_LENGTH / 2
+            radius = self.EDGE_CENTER_RADIUS
+            if edge.center_circle_id is not None:
+                self.canvas.coords(
+                    edge.center_circle_id,
+                    x - radius,
+                    mid_y - radius,
+                    x + radius,
+                    mid_y + radius,
+                )
+                self.canvas.tag_raise(edge.label_id, edge.center_circle_id)
+            if edge.ground_marker_id is not None:
+                triangle_points = [
+                    x - self.GROUND_TRIANGLE_WIDTH / 2,
+                    line_end_y,
+                    x + self.GROUND_TRIANGLE_WIDTH / 2,
+                    line_end_y,
+                    x,
+                    line_end_y + self.GROUND_TRIANGLE_HEIGHT,
+                ]
+                self.canvas.coords(edge.ground_marker_id, *triangle_points)
+            self.canvas.coords(edge.label_id, x, mid_y)
+            return
+
         node_a = self.nodes[edge.nodes[0]]
         node_b = self.nodes[edge.nodes[1]]
         self.canvas.coords(edge.line_id, node_a.x, node_a.y, node_b.x, node_b.y)
         center_x = (node_a.x + node_b.x) / 2
         center_y = (node_a.y + node_b.y) / 2
         radius = self.EDGE_CENTER_RADIUS
-        self.canvas.coords(
-            edge.center_circle_id,
-            center_x - radius,
-            center_y - radius,
-            center_x + radius,
-            center_y + radius,
-        )
+        if edge.center_circle_id is not None:
+            self.canvas.coords(
+                edge.center_circle_id,
+                center_x - radius,
+                center_y - radius,
+                center_x + radius,
+                center_y + radius,
+            )
+            self.canvas.tag_raise(edge.label_id, edge.center_circle_id)
         self.canvas.coords(edge.label_id, center_x, center_y)
 
     def _edit_edge(self, edge_id: int) -> None:
@@ -329,6 +414,43 @@ class CircuitGraphApp:
             return
         self._apply_edge_parameters(edge, dialog.value)
         self._update_status("Conexion actualizada.")
+
+    def _delete_focused_node(self) -> None:
+        if self.focus_node is None:
+            self._update_status("Selecciona un nodo y presiona Supr para eliminarlo.")
+            return
+        if self.ground_node_id is not None and self.focus_node == self.ground_node_id:
+            messagebox.showinfo("No permitido", "El nodo GND no puede eliminarse.", parent=self.root)
+            return
+        node_id = self.focus_node
+        node = self.nodes.get(node_id)
+        if node is None:
+            return
+        node_name = node.name
+        self._remove_node(node_id)
+        self._set_focus_node(None)
+        self._update_status(f"Nodo {node_name} eliminado.")
+
+    def _remove_node(self, node_id: int) -> None:
+        node = self.nodes.pop(node_id, None)
+        if node is None:
+            return
+        self.canvas.delete(node.circle_id)
+        self.canvas.delete(node.label_id)
+        edges_to_remove = [edge_id for edge_id, edge in self.edges.items() if node_id in edge.nodes]
+        for edge_id in edges_to_remove:
+            self._remove_edge(edge_id)
+
+    def _remove_edge(self, edge_id: int) -> None:
+        edge = self.edges.pop(edge_id, None)
+        if edge is None:
+            return
+        self.canvas.delete(edge.line_id)
+        if edge.center_circle_id is not None:
+            self.canvas.delete(edge.center_circle_id)
+        if edge.ground_marker_id is not None:
+            self.canvas.delete(edge.ground_marker_id)
+        self.canvas.delete(edge.label_id)
 
     def _apply_edge_parameters(self, edge: Edge, params: EdgeParameters) -> None:
         edge.capacitance_expr = params.capacitance_expr
@@ -349,8 +471,12 @@ class CircuitGraphApp:
                 edge.inductance_text,
             ),
         )
+        self._update_edge_geometry(edge.identifier)
 
     def _rename_node(self, node_id: int) -> None:
+        if self.ground_node_id is not None and node_id == self.ground_node_id:
+            messagebox.showinfo("No permitido", "El nodo GND no puede renombrarse.", parent=self.root)
+            return
         node = self.nodes[node_id]
         new_name = simpledialog.askstring(
             "Renombrar nodo",
@@ -423,7 +549,8 @@ class CircuitGraphApp:
             justify=tk.CENTER,
             tags=("edge", tag),
         )
-        self.canvas.tag_raise(label, circle)
+        if circle is not None:
+            self.canvas.tag_raise(label, circle)
         self.edges[edge_id] = Edge(
             identifier=edge_id,
             nodes=(first, second),
@@ -441,7 +568,93 @@ class CircuitGraphApp:
             "<Double-Button-1>",
             lambda event, eid=edge_id: self._edit_edge(eid),
         )
+        self._apply_edge_parameters(self.edges[edge_id], params)
         self._update_status("Conexion creada. Pulsa 'c' para otra o Escape para salir del modo.")
+
+    def _create_ground_edge(self, node_id: int, params: EdgeParameters) -> None:
+        if self.ground_node_id is None:
+            return
+        capacitance_expr = params.capacitance_expr
+        capacitance_text = params.capacitance_text
+        inductance_expr = params.inductance_expr
+        inductance_text = params.inductance_text
+        l_inverse_expr: Optional[sp.Expr] = None
+        if inductance_expr is not None:
+            l_inverse_expr = sp.simplify(sp.Integer(1) / inductance_expr)
+        edge_id = self.edge_counter
+        self.edge_counter += 1
+        tag = f"edge_{edge_id}"
+        node = self.nodes[node_id]
+        x = node.x
+        y = node.y
+        line_end_y = y + self.GROUND_LINE_LENGTH
+        line = self.canvas.create_line(
+            x,
+            y,
+            x,
+            line_end_y,
+            width=2,
+            fill="#424242",
+            tags=("edge", tag),
+        )
+        mid_y = y + self.GROUND_LINE_LENGTH / 2
+        radius = self.EDGE_CENTER_RADIUS
+        circle = self.canvas.create_oval(
+            x - radius,
+            mid_y - radius,
+            x + radius,
+            mid_y + radius,
+            fill="#f5f5f5",
+            outline="#424242",
+            width=2,
+            tags=("edge", tag),
+        )
+        triangle_points = [
+            x - self.GROUND_TRIANGLE_WIDTH / 2,
+            line_end_y,
+            x + self.GROUND_TRIANGLE_WIDTH / 2,
+            line_end_y,
+            x,
+            line_end_y + self.GROUND_TRIANGLE_HEIGHT,
+        ]
+        triangle = self.canvas.create_polygon(
+            triangle_points,
+            fill="#f5f5f5",
+            outline="#424242",
+            width=2,
+            tags=("edge", tag),
+        )
+        label = self.canvas.create_text(
+            x,
+            mid_y,
+            text="",
+            fill="#212121",
+            justify=tk.CENTER,
+            anchor=tk.CENTER,
+            tags=("edge", tag),
+        )
+        self.canvas.tag_raise(label, circle)
+        self.edges[edge_id] = Edge(
+            identifier=edge_id,
+            nodes=(node_id, self.ground_node_id),
+            line_id=line,
+            center_circle_id=circle,
+            label_id=label,
+            capacitance_expr=capacitance_expr,
+            capacitance_text=capacitance_text,
+            inductance_expr=inductance_expr,
+            inductance_text=inductance_text,
+            l_inverse_expr=l_inverse_expr,
+            is_ground=True,
+            ground_marker_id=triangle,
+        )
+        self.canvas.tag_bind(
+            tag,
+            "<Double-Button-1>",
+            lambda event, eid=edge_id: self._edit_edge(eid),
+        )
+        self._apply_edge_parameters(self.edges[edge_id], params)
+        self._update_edge_geometry(edge_id)
 
     def _edge_label(
         self,
@@ -483,8 +696,17 @@ class CircuitGraphApp:
         return None
 
     def _highlight_node(self, node_id: int, active: bool) -> None:
-        color = "#d32f2f" if active else "#1976d2"
+        base_color = "#455a64" if self.ground_node_id is not None and node_id == self.ground_node_id else "#1976d2"
+        color = "#d32f2f" if active else base_color
         self.canvas.itemconfigure(self.nodes[node_id].circle_id, fill=color)
+
+    def _set_focus_node(self, node_id: Optional[int]) -> None:
+        if self.focus_node is not None:
+            if self.focus_node != self.selected_node:
+                self._highlight_node(self.focus_node, False)
+        self.focus_node = node_id
+        if node_id is not None and node_id != self.selected_node:
+            self._highlight_node(node_id, True)
 
     def _set_mode(self, mode: Optional[str]) -> None:
         if self.selected_node is not None:
@@ -494,9 +716,13 @@ class CircuitGraphApp:
         if mode == "node":
             self._update_status("Modo nodo: haz click en el lienzo para crear uno.")
         elif mode == "edge":
+            self._set_focus_node(None)
             self._update_status("Modo enlace: selecciona dos nodos existentes.")
+        elif mode == "ground":
+            self._set_focus_node(None)
+            self._update_status("Modo masa: selecciona un nodo para conectarlo a GND.")
         else:
-            self._update_status("Modo neutro. Pulsa 'n' o 'c' para continuar.")
+            self._update_status("Modo neutro. Pulsa 'n', 'c' o 'g' para continuar.")
 
     def _reset_all(self) -> None:
         if not self.nodes and not self.edges:
@@ -508,6 +734,7 @@ class CircuitGraphApp:
         self.edges.clear()
         self.node_counter = 0
         self.edge_counter = 0
+        self.ground_node_id = None
         self._set_mode(None)
         self._update_status("Todo reiniciado. Pulsa 'n' para crear nodos.")
         self.root.after_idle(self._ensure_ground_node)
@@ -582,13 +809,17 @@ class CircuitGraphApp:
 
     def _ensure_ground_node(self) -> None:
         if any(node.name == "GND" for node in self.nodes.values()):
+            for nid, node in self.nodes.items():
+                if node.name == "GND":
+                    self.ground_node_id = nid
+                    break
             return
         self.root.update_idletasks()
         width = self.canvas.winfo_width() or 600
         height = self.canvas.winfo_height() or 400
         x = width * 0.12
         y = height * 0.85
-        self._add_node(x, y, "GND", silent=True, color="#455a64")
+        self.ground_node_id = self._add_node(x, y, "GND", silent=True, color="#455a64")
         self._update_status("Nodo GND creado automaticamente. Pulsa 'n' para agregar otros nodos.")
 
     def _update_status(self, message: str) -> None:
