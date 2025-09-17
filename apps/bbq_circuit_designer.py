@@ -2,7 +2,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from dataclasses import dataclass
 from typing import Optional, Tuple, Dict
-import numpy as np
+import sympy as sp
+from sympy.printing.pycode import pycode
 
 
 @dataclass
@@ -21,15 +22,25 @@ class Edge:
     nodes: Tuple[int, int]
     line_id: int
     label_id: int
-    capacitance: Optional[float]
-    inductance: Optional[float]
-    l_inverse: Optional[float]
+    capacitance_expr: Optional[sp.Expr]
+    capacitance_text: Optional[str]
+    inductance_expr: Optional[sp.Expr]
+    inductance_text: Optional[str]
+    l_inverse_expr: Optional[sp.Expr]
+
+
+@dataclass
+class EdgeParameters:
+    capacitance_expr: Optional[sp.Expr]
+    capacitance_text: Optional[str]
+    inductance_expr: Optional[sp.Expr]
+    inductance_text: Optional[str]
 
 
 class EdgeDialog:
     def __init__(self, parent: tk.Tk, first: str, second: str):
         self.parent = parent
-        self.value: Optional[Tuple[Optional[float], Optional[float]]] = None
+        self.value: Optional[EdgeParameters] = None
         self.dialog = tk.Toplevel(parent)
         self.dialog.transient(parent)
         self.dialog.grab_set()
@@ -56,26 +67,39 @@ class EdgeDialog:
 
     def _on_accept(self) -> None:
         try:
-            cap = self._parse_float(self.cap_entry.get())
-            ind = self._parse_float(self.ind_entry.get())
+            cap_expr, cap_text = self._parse_expression(self.cap_entry.get())
+            ind_expr, ind_text = self._parse_expression(self.ind_entry.get())
         except ValueError as exc:
             messagebox.showerror("Entrada invalida", str(exc), parent=self.dialog)
             return
-        if ind is not None and np.isclose(ind, 0.0):
-            messagebox.showerror("Entrada invalida", "La inductancia no puede ser cero.", parent=self.dialog)
-            return
-        self.value = (cap, ind)
+        if ind_expr is not None:
+            if ind_expr.is_zero is True:
+                messagebox.showerror("Entrada invalida", "La inductancia no puede ser cero.", parent=self.dialog)
+                return
+            if ind_expr.is_number and float(ind_expr.evalf()) == 0.0:
+                messagebox.showerror("Entrada invalida", "La inductancia no puede ser cero.", parent=self.dialog)
+                return
+        self.value = EdgeParameters(
+            capacitance_expr=cap_expr,
+            capacitance_text=cap_text,
+            inductance_expr=ind_expr,
+            inductance_text=ind_text,
+        )
         self.dialog.destroy()
 
     @staticmethod
-    def _parse_float(text: str) -> Optional[float]:
+    def _parse_expression(text: str) -> Tuple[Optional[sp.Expr], Optional[str]]:
         stripped = text.strip()
         if not stripped:
-            return None
+            return None, None
         try:
-            return float(stripped)
-        except ValueError as exc:
-            raise ValueError("Introduce un numero valido.") from exc
+            expr = sp.sympify(stripped)
+        except (sp.SympifyError, TypeError) as exc:
+            raise ValueError("Introduce un numero o expresion valida.") from exc
+        if expr.is_real is False:
+            raise ValueError("Solo se admiten valores reales.")
+        expr = sp.simplify(expr)
+        return expr, stripped
 
 
 class CircuitGraphApp:
@@ -230,10 +254,14 @@ class CircuitGraphApp:
         if dialog.value is None:
             self._update_status("Conexion cancelada.")
             return
-        capacitance, inductance = dialog.value
-        l_inverse = None
-        if inductance is not None:
-            l_inverse = 1.0 / inductance
+        params = dialog.value
+        capacitance_expr = params.capacitance_expr
+        capacitance_text = params.capacitance_text
+        inductance_expr = params.inductance_expr
+        inductance_text = params.inductance_text
+        l_inverse_expr: Optional[sp.Expr] = None
+        if inductance_expr is not None:
+            l_inverse_expr = sp.simplify(sp.Integer(1) / inductance_expr)
         edge_id = self.edge_counter
         self.edge_counter += 1
         tag = f"edge_{edge_id}"
@@ -243,22 +271,53 @@ class CircuitGraphApp:
         label = self.canvas.create_text(
             (x1 + x2) / 2,
             (y1 + y2) / 2,
-            text=self._edge_label(capacitance, inductance),
+            text=self._edge_label(capacitance_expr, capacitance_text, inductance_expr, inductance_text),
             fill="black",
             tags=("edge", tag),
         )
-        self.edges[edge_id] = Edge(edge_id, (first, second), line, label, capacitance, inductance, l_inverse)
+        self.edges[edge_id] = Edge(
+            identifier=edge_id,
+            nodes=(first, second),
+            line_id=line,
+            label_id=label,
+            capacitance_expr=capacitance_expr,
+            capacitance_text=capacitance_text,
+            inductance_expr=inductance_expr,
+            inductance_text=inductance_text,
+            l_inverse_expr=l_inverse_expr,
+        )
         self._refresh_edges_view()
         self._update_matrices()
         self._update_status("Conexion creada. Pulsa 'c' para otra o Escape para salir del modo.")
 
-    def _edge_label(self, capacitance: Optional[float], inductance: Optional[float]) -> str:
+    def _edge_label(
+        self,
+        capacitance_expr: Optional[sp.Expr],
+        capacitance_text: Optional[str],
+        inductance_expr: Optional[sp.Expr],
+        inductance_text: Optional[str],
+    ) -> str:
         parts: list[str] = []
-        if capacitance is not None:
-            parts.append(f"C={capacitance:g}")
-        if inductance is not None:
-            parts.append(f"L={inductance:g}")
+        cap_display = self._expression_to_display(capacitance_expr, capacitance_text)
+        ind_display = self._expression_to_display(inductance_expr, inductance_text)
+        if cap_display is not None:
+            parts.append(f"C={cap_display}")
+        if ind_display is not None:
+            parts.append(f"L={ind_display}")
         return " | ".join(parts) if parts else "(sin valores)"
+
+    def _expression_to_display(
+        self, expr: Optional[sp.Expr], raw_text: Optional[str]
+    ) -> Optional[str]:
+        if expr is None:
+            return None
+        if expr.free_symbols:
+            return raw_text or str(expr)
+        try:
+            numerical = float(expr.evalf())
+        except (TypeError, ValueError):
+            return raw_text or str(expr)
+        return f"{numerical:g}"
 
     def _find_edge(self, first: int, second: int) -> Edge | None:
         for edge in self.edges.values():
@@ -311,8 +370,8 @@ class CircuitGraphApp:
         for edge in self.edges.values():
             first, second = edge.nodes
             node_pair = f"{self.nodes[first].name}-{self.nodes[second].name}"
-            cap_text = f"{edge.capacitance:g}" if edge.capacitance is not None else "-"
-            ind_text = f"{edge.inductance:g}" if edge.inductance is not None else "-"
+            cap_text = self._expression_to_display(edge.capacitance_expr, edge.capacitance_text) or "-"
+            ind_text = self._expression_to_display(edge.inductance_expr, edge.inductance_text) or "-"
             self.edge_tree.insert("", tk.END, values=(node_pair, cap_text, ind_text))
 
     def _clear_matrices(self) -> None:
@@ -327,32 +386,49 @@ class CircuitGraphApp:
         self._write_text(self.c_matrix_text, self._matrix_to_str(c_matrix))
         self._write_text(self.linv_matrix_text, self._matrix_to_str(l_inv_matrix))
 
-    def _compute_matrices(self) -> Tuple[np.ndarray, np.ndarray]:
+    def _compute_matrices(self) -> Tuple[sp.Matrix, sp.Matrix]:
         node_ids = sorted(self.nodes.keys())
         index_map = {node_id: idx for idx, node_id in enumerate(node_ids)}
         size = len(node_ids)
-        c_matrix = np.zeros((size, size))
-        l_inv_matrix = np.zeros((size, size))
+        c_matrix = sp.zeros(size)
+        l_inv_matrix = sp.zeros(size)
         for edge in self.edges.values():
             i, j = (index_map[nid] for nid in edge.nodes)
-            if edge.capacitance is not None:
-                value = edge.capacitance
+            if edge.capacitance_expr is not None:
+                value = edge.capacitance_expr
                 c_matrix[i, i] += value
                 c_matrix[j, j] += value
                 c_matrix[i, j] -= value
                 c_matrix[j, i] -= value
-            if edge.l_inverse is not None:
-                value = edge.l_inverse
+            if edge.l_inverse_expr is not None:
+                value = edge.l_inverse_expr
                 l_inv_matrix[i, i] += value
                 l_inv_matrix[j, j] += value
                 l_inv_matrix[i, j] -= value
                 l_inv_matrix[j, i] -= value
-        return c_matrix, l_inv_matrix
+        return sp.Matrix(c_matrix), sp.Matrix(l_inv_matrix)
 
-    def _matrix_to_str(self, matrix: np.ndarray) -> str:
-        if matrix.size == 0:
+    def _matrix_to_str(self, matrix: sp.Matrix) -> str:
+        if matrix.shape == (0, 0):
             return "[]"
-        return np.array2string(matrix, precision=4, suppress_small=True)
+        return sp.pretty(matrix, use_unicode=False)
+
+    def _matrix_function_snippet(self, func_name: str, matrix: sp.Matrix) -> Tuple[list[str], list[str]]:
+        symbols = sorted(matrix.free_symbols, key=lambda sym: sym.name)
+        param_names = [symbol.name for symbol in symbols]
+        args = ", ".join(param_names)
+        indent = " " * 4
+        signature = f"def {func_name}({args}):" if args else f"def {func_name}():"
+        lines: list[str] = [signature, f"{indent}return np.array(["]
+
+        rows = matrix.tolist()
+        for idx, row in enumerate(rows):
+            exprs = [pycode(entry) for entry in row]
+            suffix = "," if idx < len(rows) - 1 else ""
+            lines.append(f"{indent * 2}[{', '.join(exprs)}]{suffix}")
+
+        lines.append(f"{indent}], dtype=float)")
+        return lines, param_names
 
     def _write_text(self, widget: tk.Text, content: str) -> None:
         widget.configure(state="normal")
@@ -365,13 +441,26 @@ class CircuitGraphApp:
             messagebox.showinfo("Sin datos", "Crea al menos un nodo para generar las matrices.", parent=self.root)
             return
         c_matrix, l_inv_matrix = self._compute_matrices()
-        snippet = (
-            "import numpy as np\n"
-            "from sccircuits.bbq import BBQ\n\n"
-            f"C_matrix = np.array({repr(c_matrix.tolist())}, dtype=float)\n"
-            f"L_inv_matrix = np.array({repr(l_inv_matrix.tolist())}, dtype=float)\n\n"
-            "bbq = BBQ(C_matrix=C_matrix, L_inv_matrix=L_inv_matrix)\n"
-        )
+        snippet_lines = [
+            "import math",
+            "import numpy as np",
+            "",
+        ]
+
+        c_func_lines, c_params = self._matrix_function_snippet("C_matrix_func", c_matrix)
+        l_func_lines, l_params = self._matrix_function_snippet("L_inv_matrix_func", l_inv_matrix)
+
+        if c_params:
+            snippet_lines.append(f"# C_matrix_func parameters: {', '.join(c_params)}")
+        if l_params:
+            snippet_lines.append(f"# L_inv_matrix_func parameters: {', '.join(l_params)}")
+        if c_params or l_params:
+            snippet_lines.append("")
+
+        snippet_lines.extend(c_func_lines)
+        snippet_lines.append("")
+        snippet_lines.extend(l_func_lines)
+        snippet = "\n".join(snippet_lines)
         self.root.clipboard_clear()
         self.root.clipboard_append(snippet)
         self._update_status("Snippet copiado al portapapeles.")
