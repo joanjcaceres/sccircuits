@@ -39,7 +39,14 @@ class EdgeParameters:
 
 
 class EdgeDialog:
-    def __init__(self, parent: tk.Tk, first: str, second: str):
+    def __init__(
+        self,
+        parent: tk.Tk,
+        first: str,
+        second: str,
+        default_cap: Optional[str] = None,
+        default_ind: Optional[str] = None,
+    ):
         self.parent = parent
         self.value: Optional[EdgeParameters] = None
         self.dialog = tk.Toplevel(parent)
@@ -51,10 +58,14 @@ class EdgeDialog:
         ttk.Label(self.dialog, text="Capacitancia (F)").grid(row=1, column=0, sticky=tk.W, padx=10)
         self.cap_entry = ttk.Entry(self.dialog, width=18)
         self.cap_entry.grid(row=1, column=1, padx=10, pady=2)
+        if default_cap:
+            self.cap_entry.insert(0, default_cap)
 
         ttk.Label(self.dialog, text="Inductancia (H)").grid(row=2, column=0, sticky=tk.W, padx=10)
         self.ind_entry = ttk.Entry(self.dialog, width=18)
         self.ind_entry.grid(row=2, column=1, padx=10, pady=2)
+        if default_ind:
+            self.ind_entry.insert(0, default_ind)
 
         buttons = ttk.Frame(self.dialog)
         buttons.grid(row=3, column=0, columnspan=2, pady=10)
@@ -116,10 +127,13 @@ class CircuitGraphApp:
         self.edge_counter = 0
         self.mode: Optional[str] = None
         self.selected_node: Optional[int] = None
+        self.dragging_node: Optional[int] = None
+        self.drag_offset: Tuple[float, float] = (0.0, 0.0)
         self.status_var = tk.StringVar(value="Pulsa 'n' para crear nodos, 'c' para conectar.")
 
         self._build_ui()
         self._bind_shortcuts()
+        self.root.after_idle(self._ensure_ground_node)
 
     def _build_ui(self) -> None:
         self.root.columnconfigure(0, weight=1)
@@ -159,13 +173,22 @@ class CircuitGraphApp:
         self._add_node(event.x, event.y, name)
 
     def _ask_node_name(self) -> str:
-        default = f"N{self.node_counter + 1}"
+        default_index = sum(1 for node in self.nodes.values() if node.name != "GND") + 1
+        default = f"N{default_index}"
         prompt = simpledialog.askstring("Nuevo nodo", "Nombre del nodo:", initialvalue=default, parent=self.root)
         if not prompt:
             return default
         return prompt.strip()
 
-    def _add_node(self, x: float, y: float, name: str) -> None:
+    def _add_node(
+        self,
+        x: float,
+        y: float,
+        name: str,
+        *,
+        silent: bool = False,
+        color: str = "#1976d2",
+    ) -> None:
         node_id = self.node_counter
         self.node_counter += 1
         tag = f"node_{node_id}"
@@ -174,7 +197,7 @@ class CircuitGraphApp:
             y - self.NODE_RADIUS,
             x + self.NODE_RADIUS,
             y + self.NODE_RADIUS,
-            fill="#1976d2",
+            fill=color,
             outline="black",
             width=2,
             tags=("node", tag),
@@ -187,15 +210,45 @@ class CircuitGraphApp:
             anchor=tk.W,
             tags=("node", tag),
         )
-        self.canvas.tag_bind(tag, "<Button-1>", lambda event, nid=node_id: self._on_node_click(event, nid))
+        self.canvas.tag_bind(
+            tag,
+            "<ButtonPress-1>",
+            lambda event, nid=node_id: self._handle_node_press(event, nid),
+        )
+        self.canvas.tag_bind(
+            tag,
+            "<B1-Motion>",
+            lambda event, nid=node_id: self._handle_node_drag(event, nid),
+        )
+        self.canvas.tag_bind(
+            tag,
+            "<ButtonRelease-1>",
+            lambda event, nid=node_id: self._handle_node_release(event, nid),
+        )
+        self.canvas.tag_bind(
+            tag,
+            "<Double-Button-1>",
+            lambda event, nid=node_id: self._rename_node(nid),
+        )
 
         self.nodes[node_id] = Node(node_id, name, x, y, circle, label)
-        self._update_status(f"Nodo {name} creado. Pulsa 'c' para conectar.")
+        if not silent:
+            self._update_status(f"Nodo {name} creado. Pulsa 'c' para conectar.")
 
-    def _on_node_click(self, event: tk.Event, node_id: int) -> None:
-        if self.mode != "edge":
-            self._update_status(f"Nodo seleccionado: {self.nodes[node_id].name}")
+    def _handle_node_press(self, event: tk.Event, node_id: int) -> None:
+        if self.mode == "edge":
+            self._handle_edge_mode_click(node_id)
             return
+        self.dragging_node = node_id
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
+        node = self.nodes[node_id]
+        self.drag_offset = (node.x - canvas_x, node.y - canvas_y)
+        self.canvas.tag_raise(node.circle_id)
+        self.canvas.tag_raise(node.label_id)
+        self._update_status(f"Moviendo nodo {node.name}.")
+
+    def _handle_edge_mode_click(self, node_id: int) -> None:
         if self.selected_node is None:
             self.selected_node = node_id
             self._highlight_node(node_id, True)
@@ -209,6 +262,110 @@ class CircuitGraphApp:
         self._highlight_node(first, False)
         self.selected_node = None
         self._create_edge(first, second)
+
+    def _handle_node_drag(self, event: tk.Event, node_id: int) -> None:
+        if self.dragging_node != node_id or self.mode == "edge":
+            return
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
+        offset_x, offset_y = self.drag_offset
+        new_x = canvas_x + offset_x
+        new_y = canvas_y + offset_y
+        self._move_node(node_id, new_x, new_y)
+
+    def _handle_node_release(self, event: tk.Event, node_id: int) -> None:
+        if self.dragging_node != node_id:
+            return
+        node = self.nodes[node_id]
+        self.dragging_node = None
+        self._update_status(f"Nodo {node.name} reposicionado.")
+
+    def _move_node(self, node_id: int, x: float, y: float) -> None:
+        node = self.nodes[node_id]
+        node.x = x
+        node.y = y
+        self.canvas.coords(
+            node.circle_id,
+            x - self.NODE_RADIUS,
+            y - self.NODE_RADIUS,
+            x + self.NODE_RADIUS,
+            y + self.NODE_RADIUS,
+        )
+        self.canvas.coords(node.label_id, x + self.NODE_RADIUS + 6, y)
+        for edge_id, edge in self.edges.items():
+            if node_id in edge.nodes:
+                self._update_edge_geometry(edge_id)
+
+    def _update_edge_geometry(self, edge_id: int) -> None:
+        edge = self.edges[edge_id]
+        node_a = self.nodes[edge.nodes[0]]
+        node_b = self.nodes[edge.nodes[1]]
+        self.canvas.coords(edge.line_id, node_a.x, node_a.y, node_b.x, node_b.y)
+        center_x = (node_a.x + node_b.x) / 2
+        center_y = (node_a.y + node_b.y) / 2
+        radius = self.EDGE_CENTER_RADIUS
+        self.canvas.coords(
+            edge.center_circle_id,
+            center_x - radius,
+            center_y - radius,
+            center_x + radius,
+            center_y + radius,
+        )
+        self.canvas.coords(edge.label_id, center_x, center_y)
+
+    def _edit_edge(self, edge_id: int) -> None:
+        edge = self.edges[edge_id]
+        first_name = self.nodes[edge.nodes[0]].name
+        second_name = self.nodes[edge.nodes[1]].name
+        default_cap = edge.capacitance_text or (
+            str(edge.capacitance_expr) if edge.capacitance_expr is not None else ""
+        )
+        default_ind = edge.inductance_text or (
+            str(edge.inductance_expr) if edge.inductance_expr is not None else ""
+        )
+        dialog = EdgeDialog(self.root, first_name, second_name, default_cap, default_ind)
+        if dialog.value is None:
+            self._update_status("Edicion de conexion cancelada.")
+            return
+        self._apply_edge_parameters(edge, dialog.value)
+        self._update_status("Conexion actualizada.")
+
+    def _apply_edge_parameters(self, edge: Edge, params: EdgeParameters) -> None:
+        edge.capacitance_expr = params.capacitance_expr
+        edge.capacitance_text = params.capacitance_text
+        edge.inductance_expr = params.inductance_expr
+        edge.inductance_text = params.inductance_text
+        edge.l_inverse_expr = (
+            sp.simplify(sp.Integer(1) / edge.inductance_expr)
+            if edge.inductance_expr is not None
+            else None
+        )
+        self.canvas.itemconfigure(
+            edge.label_id,
+            text=self._edge_label(
+                edge.capacitance_expr,
+                edge.capacitance_text,
+                edge.inductance_expr,
+                edge.inductance_text,
+            ),
+        )
+
+    def _rename_node(self, node_id: int) -> None:
+        node = self.nodes[node_id]
+        new_name = simpledialog.askstring(
+            "Renombrar nodo",
+            "Nuevo nombre:",
+            initialvalue=node.name,
+            parent=self.root,
+        )
+        if not new_name:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == node.name:
+            return
+        node.name = new_name
+        self.canvas.itemconfigure(node.label_id, text=new_name)
+        self._update_status(f"Nodo renombrado a {new_name}.")
 
     def _create_edge(self, first: int, second: int) -> None:
         first_name = self.nodes[first].name
@@ -279,6 +436,11 @@ class CircuitGraphApp:
             inductance_text=inductance_text,
             l_inverse_expr=l_inverse_expr,
         )
+        self.canvas.tag_bind(
+            tag,
+            "<Double-Button-1>",
+            lambda event, eid=edge_id: self._edit_edge(eid),
+        )
         self._update_status("Conexion creada. Pulsa 'c' para otra o Escape para salir del modo.")
 
     def _edge_label(
@@ -348,6 +510,7 @@ class CircuitGraphApp:
         self.edge_counter = 0
         self._set_mode(None)
         self._update_status("Todo reiniciado. Pulsa 'n' para crear nodos.")
+        self.root.after_idle(self._ensure_ground_node)
 
     def _compute_matrices(self) -> Tuple[sp.Matrix, sp.Matrix]:
         node_ids = sorted(self.nodes.keys())
@@ -416,6 +579,17 @@ class CircuitGraphApp:
         self.root.clipboard_clear()
         self.root.clipboard_append(snippet)
         self._update_status("Snippet copiado al portapapeles.")
+
+    def _ensure_ground_node(self) -> None:
+        if any(node.name == "GND" for node in self.nodes.values()):
+            return
+        self.root.update_idletasks()
+        width = self.canvas.winfo_width() or 600
+        height = self.canvas.winfo_height() or 400
+        x = width * 0.12
+        y = height * 0.85
+        self._add_node(x, y, "GND", silent=True, color="#455a64")
+        self._update_status("Nodo GND creado automaticamente. Pulsa 'n' para agregar otros nodos.")
 
     def _update_status(self, message: str) -> None:
         self.status_var.set(message)
