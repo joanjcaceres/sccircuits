@@ -23,7 +23,6 @@ class CircuitFitter:
         Gamma_bounds: tuple[float, float] = None,
         truncation: int = 40,
         x_scale: float = 2 * np.pi,
-        weights: list[float] = None,
         optimizer: str = "least_squares",
         use_bogoliubov: bool = True,
     ):
@@ -66,7 +65,6 @@ class CircuitFitter:
             model_func=self.eigenvalues_function,
             data=transitions,
             params_initial=self.params_initial,
-            weights=weights,
             returns_eigenvalues=True,
             optimizer=optimizer,
         )
@@ -283,7 +281,7 @@ class CircuitFitter:
                     "experimental",
                     "theoretical",
                     "residual",
-                    "weight",
+                    "sigma",
                 ]
             )
 
@@ -292,8 +290,6 @@ class CircuitFitter:
                 theo_values = self.transition_fitter.get_theoretical_curve(
                     transition, phi_values
                 )
-                weight = self.transition_fitter.weights.get(transition, 1.0)
-
                 for dp, tv in zip(data_points, theo_values):
                     residual = tv - dp.value
                     writer.writerow(
@@ -304,7 +300,7 @@ class CircuitFitter:
                             dp.value,
                             tv,
                             residual,
-                            weight,
+                            dp.sigma if dp.sigma is not None else "",
                         ]
                     )
 
@@ -572,13 +568,14 @@ class CircuitFitter:
                         pass
                 elif current_section == "data_points" and len(row) >= 7:
                     try:
+                        sigma_val = row[6].strip()
                         data_point = {
                             "transition": (int(row[0]), int(row[1])),
                             "phi_ext": float(row[2]),
                             "experimental": float(row[3]),
                             "theoretical": float(row[4]),
                             "residual": float(row[5]),
-                            "weight": float(row[6]),
+                            "sigma": float(sigma_val) if sigma_val else None,
                         }
                         results["data_points"].append(data_point)
                     except ValueError:

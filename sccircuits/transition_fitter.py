@@ -25,24 +25,34 @@ Transition = Tuple[int, int]  # (i, j) with j > i
 
 @dataclass
 class DataPoint:
-    """Holds a single experimental data point (phi_ext, frequency/energy)."""
+    """Holds a single experimental data point (phi_ext, value, optional sigma)."""
 
     phi_ext: float
     value: float  # experimental frequency or energy
+    sigma: Optional[float] = None  # measurement uncertainty (standard deviation)
+
+    def __post_init__(self) -> None:
+        self.phi_ext = float(self.phi_ext)
+        self.value = float(self.value)
+        if self.sigma is not None:
+            self.sigma = float(self.sigma)
+            if self.sigma <= 0:
+                raise ValueError(f"sigma must be positive when provided, got {self.sigma}")
 
 
 class TransitionFitter:
-    """Fits multiple transitions simultaneously with independent weights.
+    """Fits multiple transitions simultaneously with per-point uncertainties.
     Transitions (i, j) and (j, i) are treated equivalently by normalizing keys.
     Supports multiple optimization methods: least_squares, differential_evolution, or custom optimizers.
     """
+
+    DEFAULT_SIGMA = 1.0
 
     def __init__(
         self,
         model_func: Callable[[float, Sequence[float]], Union[np.ndarray, np.ndarray]],
         data: Dict[Transition, Sequence[Union[DataPoint, Tuple[float, float]]]],
         params_initial: Optional[Sequence[float]] = None,
-        weights: Optional[Dict[Transition, float]] = None,
         returns_eigenvalues: bool = False,
         optimizer: str = "least_squares",
     ) -> None:
@@ -73,18 +83,6 @@ class TransitionFitter:
                 self.data[sorted_t].extend(points)
             else:
                 self.data[sorted_t] = points
-
-        # Initialize weights, merging any reversed keys
-        self.weights: Dict[Transition, float] = {}
-        if weights:
-            for transition in self.data:
-                rev = (transition[1], transition[0])
-                self.weights[transition] = weights.get(
-                    transition, weights.get(rev, 1.0)
-                )
-        else:
-            for transition in self.data:
-                self.weights[transition] = 1.0
 
         self.result = None  # Will be set after fitting
 
@@ -122,7 +120,6 @@ class TransitionFitter:
         evals_cache: Dict[float, np.ndarray] = {}  # phi_ext -> eigenvalues
 
         for transition, data_points in self.data.items():
-            weight_factor = np.sqrt(self.weights[transition])
             i, j = transition
             for data_point in data_points:
                 # Cache eigenvalues for each unique phi_ext
@@ -137,9 +134,10 @@ class TransitionFitter:
                 evals = evals_cache[data_point.phi_ext]
 
                 theoretical_value = self._transition_freq(evals, i, j)
-                residual_list.append(
-                    weight_factor * (theoretical_value - data_point.value)
-                )
+                diff = theoretical_value - data_point.value
+                if data_point.sigma is not None:
+                    diff /= data_point.sigma
+                residual_list.append(diff)
 
         res = np.asarray(residual_list)
         # Record unique parameter evaluations
@@ -351,12 +349,6 @@ class TransitionFitter:
             bounds=bounds, verbose=verbose, optimizer="differential_evolution", **kwargs
         )
 
-    def set_weight(self, transition: Transition, weight: float):
-        """Update the weight of a specific transition (order independent)."""
-        sorted_t = tuple(sorted(transition))
-        self.weights[sorted_t] = weight
-        return self
-
     def get_theoretical_curve(
         self,
         transition: Transition,
@@ -388,11 +380,10 @@ class TransitionFitter:
         )
 
     def _get_base_data_arrays(self):
-        """
-        Helper method to get base data arrays to avoid recomputation.
+        """Helper method to get base data arrays to avoid recomputation.
 
         Returns:
-            tuple: (y_exp, y_theo, weights_array, residuals)
+            tuple: (y_exp, y_theo, sigma_array, residuals)
         """
         if self.result is None:
             raise RuntimeError("No fit has been run yet. Call fit() first.")
@@ -402,27 +393,26 @@ class TransitionFitter:
             if np.array_equal(self._cached_params, self.result.x):
                 return self._cached_base_data
 
-        y_exp = []
-        y_theo = []
-        weights_list = []
+        y_exp: List[float] = []
+        y_theo: List[float] = []
+        sigma_list: List[float] = []
 
         for transition, data_points in self.data.items():
             phi_values = [dp.phi_ext for dp in data_points]
             theo_values = self.get_theoretical_curve(transition, phi_values)
-            weight = self.weights[transition]
 
             for dp, tv in zip(data_points, theo_values):
                 y_exp.append(dp.value)
                 y_theo.append(tv)
-                weights_list.append(weight)
+                sigma_list.append(dp.sigma if dp.sigma is not None else self.DEFAULT_SIGMA)
 
-        y_exp = np.array(y_exp)
-        y_theo = np.array(y_theo)
-        weights_array = np.array(weights_list)
+        y_exp_array = np.array(y_exp)
+        y_theo_array = np.array(y_theo)
+        sigma_array = np.array(sigma_list, dtype=float)
         residuals = self.residuals(self.result.x)
 
         # Cache the results
-        self._cached_base_data = (y_exp, y_theo, weights_array, residuals)
+        self._cached_base_data = (y_exp_array, y_theo_array, sigma_array, residuals)
         self._cached_params = self.result.x.copy()
 
         return self._cached_base_data
@@ -441,7 +431,7 @@ class TransitionFitter:
             raise RuntimeError("No fit has been run yet. Call fit() first.")
 
         # Get base data (with caching)
-        y_exp, y_theo, weights_array, residuals = self._get_base_data_arrays()
+        y_exp, y_theo, sigma_array, residuals = self._get_base_data_arrays()
 
         n_data_points = len(residuals)
         n_params = len(self.result.x)
@@ -450,8 +440,8 @@ class TransitionFitter:
         # Unweighted residuals for some statistics
         unweighted_residuals = y_theo - y_exp
 
-        # Weighted residuals for proper statistics
-        weighted_residuals = weights_array * unweighted_residuals
+        # Weighted residuals using sigma (chi-squared style)
+        weighted_residuals = unweighted_residuals / sigma_array
 
         # Calculate statistics (using weighted residuals for proper fit statistics)
         ss_res_weighted = np.sum(
@@ -460,15 +450,16 @@ class TransitionFitter:
         ss_res = np.sum(unweighted_residuals**2)  # Unweighted for R²
 
         # For R², we use weighted mean if weights are not uniform
-        if np.allclose(weights_array, weights_array[0]):
+        weights = 1.0 / (sigma_array**2)
+        if np.allclose(weights, weights[0]):
             # Uniform weights - use simple mean
             y_mean = np.mean(y_exp)
         else:
             # Non-uniform weights - use weighted mean
-            y_mean = np.average(y_exp, weights=weights_array)
+            y_mean = np.average(y_exp, weights=weights)
 
         ss_tot = np.sum(
-            weights_array * (y_exp - y_mean) ** 2
+            weights * (y_exp - y_mean) ** 2
         )  # Weighted total sum of squares
 
         # R-squared and adjusted R-squared
@@ -519,16 +510,16 @@ class TransitionFitter:
             raise RuntimeError("No fit has been run yet. Call fit() first.")
 
         # Get base data arrays (with caching)
-        y_exp, y_theo, weights_array, residuals = self._get_base_data_arrays()
+        y_exp, y_theo, sigma_array, residuals = self._get_base_data_arrays()
 
         # Create detailed residuals data for outlier analysis
         residuals_data = []
         idx = 0
         for transition, data_points in self.data.items():
-            weight = self.weights[transition]
             for dp in data_points:
                 unweighted_residual = y_theo[idx] - y_exp[idx]
-                weighted_residual = np.sqrt(weight) * unweighted_residual
+                sigma_val = sigma_array[idx]
+                weighted_residual = unweighted_residual / sigma_val
                 residuals_data.append(
                     {
                         "transition": transition,
@@ -537,7 +528,7 @@ class TransitionFitter:
                         "weighted_residual": weighted_residual,
                         "experimental": dp.value,
                         "theoretical": y_theo[idx],
-                        "weight": weight,
+                        "sigma": dp.sigma,
                     }
                 )
                 idx += 1
@@ -819,6 +810,10 @@ class TransitionFitter:
             exp_array = np.array(experimental)
             theo_array = np.array(theoretical)
             residuals = theo_array - exp_array
+            sigma_array = np.array(
+                [dp.sigma if dp.sigma is not None else self.DEFAULT_SIGMA for dp in data_points],
+                dtype=float,
+            )
 
             # Basic statistics
             n_points = len(data_points)
@@ -831,13 +826,11 @@ class TransitionFitter:
             ss_tot = np.sum((exp_array - np.mean(exp_array)) ** 2)
             r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
 
-            # Weight contribution to total cost
-            weight = self.weights[transition]
-            weighted_cost = weight * ss_res
+            # Weighted cost contribution using sigma (chi-squared component)
+            weighted_cost = float(np.sum((residuals / sigma_array) ** 2))
 
             transition_stats[transition] = {
                 "n_points": n_points,
-                "weight": weight,
                 "rmse": rmse,
                 "mae": mae,
                 "max_absolute_error": max_error,
@@ -847,6 +840,7 @@ class TransitionFitter:
                 "experimental_values": experimental,
                 "theoretical_values": theoretical.tolist(),
                 "phi_ext_values": phi_values,
+                "sigma_values": [dp.sigma for dp in data_points],
             }
 
         return transition_stats
@@ -1092,7 +1086,7 @@ class TransitionFitter:
         capabilities, consider using pickle serialization to preserve the
         full result object with Jacobian, convergence history, etc.
 
-        Columns: transition_i, transition_j, phi_ext, experimental, theoretical, residual, weight
+        Columns: transition_i, transition_j, phi_ext, experimental, theoretical, residual, sigma
         """
         if self.result is None:
             raise RuntimeError("No fit has been run yet. Call fit() first.")
@@ -1117,7 +1111,7 @@ class TransitionFitter:
                     "experimental",
                     "theoretical",
                     "residual",
-                    "weight",
+                    "sigma",
                 ]
             )
             # Data rows
@@ -1134,7 +1128,7 @@ class TransitionFitter:
                             dp.value,
                             float(tv),
                             float(tv - dp.value),
-                            float(self.weights[transition]),
+                            dp.sigma if dp.sigma is not None else self.DEFAULT_SIGMA,
                         ]
                     )
         print(f"Basic results saved to CSV file: {filepath}")
