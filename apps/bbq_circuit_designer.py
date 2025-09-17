@@ -122,60 +122,24 @@ class CircuitGraphApp:
         self._bind_shortcuts()
 
     def _build_ui(self) -> None:
-        self.root.columnconfigure(0, weight=3)
-        self.root.columnconfigure(1, weight=2)
+        self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
 
         self.canvas = tk.Canvas(self.root, bg="white")
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.canvas.bind("<Button-1>", self._handle_canvas_click)
 
-        sidebar = ttk.Frame(self.root, padding=10)
-        sidebar.grid(row=0, column=1, sticky="nsew")
-        sidebar.columnconfigure(0, weight=1)
+        overlay = ttk.Frame(self.root, padding=8)
+        overlay.place(relx=0.02, rely=0.02)
 
-        ttk.Label(sidebar, textvariable=self.status_var, wraplength=260).grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        status_label = ttk.Label(overlay, textvariable=self.status_var)
+        status_label.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 6))
 
-        controls = ttk.Frame(sidebar)
-        controls.grid(row=1, column=0, sticky="ew", pady=5)
-        ttk.Button(controls, text="Modo nodo", command=lambda: self._set_mode("node")).pack(side=tk.LEFT, padx=2)
-        ttk.Button(controls, text="Modo enlace", command=lambda: self._set_mode("edge")).pack(side=tk.LEFT, padx=2)
-        ttk.Button(controls, text="Reiniciar", command=self._reset_all).pack(side=tk.LEFT, padx=2)
+        ttk.Button(overlay, text="Modo nodo", command=lambda: self._set_mode("node")).grid(row=1, column=0, padx=2)
+        ttk.Button(overlay, text="Modo enlace", command=lambda: self._set_mode("edge")).grid(row=1, column=1, padx=2)
+        ttk.Button(overlay, text="Reiniciar", command=self._reset_all).grid(row=1, column=2, padx=2)
 
-        ttk.Label(sidebar, text="Nodos").grid(row=2, column=0, sticky=tk.W, pady=(10, 2))
-        self.node_tree = ttk.Treeview(sidebar, columns=("nombre", "pos"), show="headings", height=6)
-        self.node_tree.heading("nombre", text="Nombre")
-        self.node_tree.heading("pos", text="Posicion")
-        self.node_tree.column("nombre", width=100, anchor=tk.CENTER)
-        self.node_tree.column("pos", width=140, anchor=tk.CENTER)
-        self.node_tree.grid(row=3, column=0, sticky="ew")
-
-        ttk.Label(sidebar, text="Conexiones").grid(row=4, column=0, sticky=tk.W, pady=(10, 2))
-        self.edge_tree = ttk.Treeview(sidebar, columns=("nodos", "cap", "ind"), show="headings", height=8)
-        self.edge_tree.heading("nodos", text="Entre")
-        self.edge_tree.heading("cap", text="C (F)")
-        self.edge_tree.heading("ind", text="L (H)")
-        self.edge_tree.column("nodos", width=120, anchor=tk.CENTER)
-        self.edge_tree.column("cap", width=80, anchor=tk.CENTER)
-        self.edge_tree.column("ind", width=80, anchor=tk.CENTER)
-        self.edge_tree.grid(row=5, column=0, sticky="ew")
-
-        matrix_frame = ttk.LabelFrame(sidebar, text="Matrices")
-        matrix_frame.grid(row=6, column=0, sticky="nsew", pady=(10, 0))
-        matrix_frame.columnconfigure(0, weight=1)
-        matrix_frame.rowconfigure(1, weight=1)
-
-        ttk.Label(matrix_frame, text="C").grid(row=0, column=0, sticky=tk.W)
-        self.c_matrix_text = tk.Text(matrix_frame, height=6, width=40)
-        self.c_matrix_text.grid(row=1, column=0, sticky="nsew", padx=2)
-        self.c_matrix_text.configure(state="disabled")
-
-        ttk.Label(matrix_frame, text="L^-1").grid(row=2, column=0, sticky=tk.W)
-        self.linv_matrix_text = tk.Text(matrix_frame, height=6, width=40)
-        self.linv_matrix_text.grid(row=3, column=0, sticky="nsew", padx=2)
-        self.linv_matrix_text.configure(state="disabled")
-
-        ttk.Button(sidebar, text="Copiar snippet para BBQ", command=self._copy_snippet).grid(row=7, column=0, sticky="ew", pady=10)
+        ttk.Button(overlay, text="Copiar snippet", command=self._copy_snippet).grid(row=2, column=0, columnspan=3, sticky="ew", pady=(6, 0))
 
     def _bind_shortcuts(self) -> None:
         self.root.bind("n", lambda _: self._set_mode("node"))
@@ -226,7 +190,6 @@ class CircuitGraphApp:
         self.canvas.tag_bind(tag, "<Button-1>", lambda event, nid=node_id: self._on_node_click(event, nid))
 
         self.nodes[node_id] = Node(node_id, name, x, y, circle, label)
-        self._refresh_nodes_view()
         self._update_status(f"Nodo {name} creado. Pulsa 'c' para conectar.")
 
     def _on_node_click(self, event: tk.Event, node_id: int) -> None:
@@ -316,8 +279,6 @@ class CircuitGraphApp:
             inductance_text=inductance_text,
             l_inverse_expr=l_inverse_expr,
         )
-        self._refresh_edges_view()
-        self._update_matrices()
         self._update_status("Conexion creada. Pulsa 'c' para otra o Escape para salir del modo.")
 
     def _edge_label(
@@ -386,39 +347,7 @@ class CircuitGraphApp:
         self.node_counter = 0
         self.edge_counter = 0
         self._set_mode(None)
-        self._refresh_nodes_view()
-        self._refresh_edges_view()
-        self._clear_matrices()
-
-    def _refresh_nodes_view(self) -> None:
-        for item in self.node_tree.get_children():
-            self.node_tree.delete(item)
-        for node in self.nodes.values():
-            position = f"({int(node.x)}, {int(node.y)})"
-            self.node_tree.insert("", tk.END, values=(node.name, position))
-        self._update_matrices()
-
-    def _refresh_edges_view(self) -> None:
-        for item in self.edge_tree.get_children():
-            self.edge_tree.delete(item)
-        for edge in self.edges.values():
-            first, second = edge.nodes
-            node_pair = f"{self.nodes[first].name}-{self.nodes[second].name}"
-            cap_text = self._expression_to_display(edge.capacitance_expr, edge.capacitance_text) or "-"
-            ind_text = self._expression_to_display(edge.inductance_expr, edge.inductance_text) or "-"
-            self.edge_tree.insert("", tk.END, values=(node_pair, cap_text, ind_text))
-
-    def _clear_matrices(self) -> None:
-        self._write_text(self.c_matrix_text, "")
-        self._write_text(self.linv_matrix_text, "")
-
-    def _update_matrices(self) -> None:
-        if not self.nodes:
-            self._clear_matrices()
-            return
-        c_matrix, l_inv_matrix = self._compute_matrices()
-        self._write_text(self.c_matrix_text, self._matrix_to_str(c_matrix))
-        self._write_text(self.linv_matrix_text, self._matrix_to_str(l_inv_matrix))
+        self._update_status("Todo reiniciado. Pulsa 'n' para crear nodos.")
 
     def _compute_matrices(self) -> Tuple[sp.Matrix, sp.Matrix]:
         node_ids = sorted(self.nodes.keys())
@@ -442,11 +371,6 @@ class CircuitGraphApp:
                 l_inv_matrix[j, i] -= value
         return sp.Matrix(c_matrix), sp.Matrix(l_inv_matrix)
 
-    def _matrix_to_str(self, matrix: sp.Matrix) -> str:
-        if matrix.shape == (0, 0):
-            return "[]"
-        return sp.pretty(matrix, use_unicode=False)
-
     def _matrix_function_snippet(self, func_name: str, matrix: sp.Matrix) -> Tuple[list[str], list[str]]:
         symbols = sorted(matrix.free_symbols, key=lambda sym: sym.name)
         param_names = [symbol.name for symbol in symbols]
@@ -463,12 +387,6 @@ class CircuitGraphApp:
 
         lines.append(f"{indent}], dtype=float)")
         return lines, param_names
-
-    def _write_text(self, widget: tk.Text, content: str) -> None:
-        widget.configure(state="normal")
-        widget.delete("1.0", tk.END)
-        widget.insert(tk.END, content)
-        widget.configure(state="disabled")
 
     def _copy_snippet(self) -> None:
         if not self.nodes:
