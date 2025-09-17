@@ -21,6 +21,7 @@ class Edge:
     identifier: int
     nodes: Tuple[int, int]
     line_id: int
+    center_circle_id: int
     label_id: int
     capacitance_expr: Optional[sp.Expr]
     capacitance_text: Optional[str]
@@ -103,7 +104,8 @@ class EdgeDialog:
 
 
 class CircuitGraphApp:
-    NODE_RADIUS = 18
+    NODE_RADIUS = 6
+    EDGE_CENTER_RADIUS = 16
 
     def __init__(self) -> None:
         self.root = tk.Tk()
@@ -213,7 +215,14 @@ class CircuitGraphApp:
             width=2,
             tags=("node", tag),
         )
-        label = self.canvas.create_text(x, y, text=name, fill="white", tags=("node", tag))
+        label = self.canvas.create_text(
+            x + self.NODE_RADIUS + 6,
+            y,
+            text=name,
+            fill="#212121",
+            anchor=tk.W,
+            tags=("node", tag),
+        )
         self.canvas.tag_bind(tag, "<Button-1>", lambda event, nid=node_id: self._on_node_click(event, nid))
 
         self.nodes[node_id] = Node(node_id, name, x, y, circle, label)
@@ -268,17 +277,38 @@ class CircuitGraphApp:
         x1, y1 = self.nodes[first].x, self.nodes[first].y
         x2, y2 = self.nodes[second].x, self.nodes[second].y
         line = self.canvas.create_line(x1, y1, x2, y2, width=2, fill="#424242", tags=("edge", tag))
-        label = self.canvas.create_text(
-            (x1 + x2) / 2,
-            (y1 + y2) / 2,
-            text=self._edge_label(capacitance_expr, capacitance_text, inductance_expr, inductance_text),
-            fill="black",
+        center_x = (x1 + x2) / 2
+        center_y = (y1 + y2) / 2
+        radius = self.EDGE_CENTER_RADIUS
+        circle = self.canvas.create_oval(
+            center_x - radius,
+            center_y - radius,
+            center_x + radius,
+            center_y + radius,
+            fill="#f5f5f5",
+            outline="#424242",
+            width=2,
             tags=("edge", tag),
         )
+        label = self.canvas.create_text(
+            center_x,
+            center_y,
+            text=self._edge_label(
+                capacitance_expr,
+                capacitance_text,
+                inductance_expr,
+                inductance_text,
+            ),
+            fill="#212121",
+            justify=tk.CENTER,
+            tags=("edge", tag),
+        )
+        self.canvas.tag_raise(label, circle)
         self.edges[edge_id] = Edge(
             identifier=edge_id,
             nodes=(first, second),
             line_id=line,
+            center_circle_id=circle,
             label_id=label,
             capacitance_expr=capacitance_expr,
             capacitance_text=capacitance_text,
@@ -304,7 +334,11 @@ class CircuitGraphApp:
             parts.append(f"C={cap_display}")
         if ind_display is not None:
             parts.append(f"L={ind_display}")
-        return " | ".join(parts) if parts else "(sin valores)"
+        if not parts:
+            return ""
+        if len(parts) == 1:
+            return parts[0]
+        return "\n".join(parts)
 
     def _expression_to_display(
         self, expr: Optional[sp.Expr], raw_text: Optional[str]
