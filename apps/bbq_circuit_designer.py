@@ -622,7 +622,42 @@ class CircuitGraphApp:
             )
         ]
 
+        boundary_nodes = []
+        if selected_nodes:
+            min_x = min(self.nodes[nid].x for nid in selected_nodes)
+            max_x = max(self.nodes[nid].x for nid in selected_nodes)
+            left_nodes = sorted(
+                [nid for nid in selected_nodes if abs(self.nodes[nid].x - min_x) < 1e-6],
+                key=lambda nid: self.nodes[nid].y,
+            )
+            right_nodes = sorted(
+                [nid for nid in selected_nodes if abs(self.nodes[nid].x - max_x) < 1e-6],
+                key=lambda nid: self.nodes[nid].y,
+            )
+            boundary_nodes = [left_nodes, right_nodes]
+
+        bridging_templates: list[tuple[int, int, Edge]] = []
+        if len(boundary_nodes) == 2:
+            left_nodes, right_nodes = boundary_nodes
+            for right_node in right_nodes:
+                template_edge = None
+                for edge in original_edges:
+                    if edge.is_ground:
+                        continue
+                    if right_node in edge.nodes:
+                        other = edge.nodes[0] if edge.nodes[1] == right_node else edge.nodes[1]
+                        if other in left_nodes:
+                            template_edge = edge
+                            break
+                if template_edge is not None:
+                    other = template_edge.nodes[0] if template_edge.nodes[1] == right_node else template_edge.nodes[1]
+                    bridging_templates.append((right_node, other, template_edge))
+
         all_new_nodes: list[int] = []
+
+        last_tail_map: Dict[int, int] = {}
+        for idx, (right_node, _, _) in enumerate(bridging_templates):
+            last_tail_map[idx] = right_node
 
         for replica_index in range(1, copies + 1):
             mapping: Dict[int, int] = {}
@@ -662,6 +697,21 @@ class CircuitGraphApp:
                     second_new = mapping.get(edge.nodes[1])
                     if first_new is not None and second_new is not None:
                         self._instantiate_edge(first_new, second_new, params)
+
+            for idx, (right_original, left_original, template_edge) in enumerate(bridging_templates):
+                previous_tail = last_tail_map.get(idx)
+                head_new = mapping.get(left_original)
+                tail_new = mapping.get(right_original)
+                if previous_tail is not None and head_new is not None:
+                    bridge_params = EdgeParameters(
+                        capacitance_expr=template_edge.capacitance_expr,
+                        capacitance_text=template_edge.capacitance_text,
+                        inductance_expr=template_edge.inductance_expr,
+                        inductance_text=template_edge.inductance_text,
+                    )
+                    self._instantiate_edge(previous_tail, head_new, bridge_params)
+                if tail_new is not None:
+                    last_tail_map[idx] = tail_new
 
         self.selected_nodes = set(all_new_nodes)
         if all_new_nodes:
