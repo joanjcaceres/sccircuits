@@ -1,12 +1,15 @@
 import copy
+import json
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
 from dataclasses import dataclass
-from typing import Optional, Tuple, Dict
+from pathlib import Path
+from tkinter import filedialog, messagebox, simpledialog, ttk
+from typing import Dict, Optional, Tuple
 
-GROUND_NODE_ID = -1
 import sympy as sp
 from sympy.printing.pycode import pycode
+
+GROUND_NODE_ID = -1
 
 
 @dataclass
@@ -60,15 +63,21 @@ class EdgeDialog:
         self.dialog.transient(parent)
         self.dialog.grab_set()
         self.dialog.title("Valores del enlace")
-        ttk.Label(self.dialog, text=f"Entre {first} y {second}").grid(row=0, column=0, columnspan=2, padx=10, pady=(10, 5))
+        ttk.Label(self.dialog, text=f"Entre {first} y {second}").grid(
+            row=0, column=0, columnspan=2, padx=10, pady=(10, 5)
+        )
 
-        ttk.Label(self.dialog, text="Capacitancia (F)").grid(row=1, column=0, sticky=tk.W, padx=10)
+        ttk.Label(self.dialog, text="Capacitancia (F)").grid(
+            row=1, column=0, sticky=tk.W, padx=10
+        )
         self.cap_entry = ttk.Entry(self.dialog, width=18)
         self.cap_entry.grid(row=1, column=1, padx=10, pady=2)
         if default_cap:
             self.cap_entry.insert(0, default_cap)
 
-        ttk.Label(self.dialog, text="Inductancia (H)").grid(row=2, column=0, sticky=tk.W, padx=10)
+        ttk.Label(self.dialog, text="Inductancia (H)").grid(
+            row=2, column=0, sticky=tk.W, padx=10
+        )
         self.ind_entry = ttk.Entry(self.dialog, width=18)
         self.ind_entry.grid(row=2, column=1, padx=10, pady=2)
         if default_ind:
@@ -76,8 +85,12 @@ class EdgeDialog:
 
         buttons = ttk.Frame(self.dialog)
         buttons.grid(row=3, column=0, columnspan=2, pady=10)
-        ttk.Button(buttons, text="Cancelar", command=self.dialog.destroy).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(buttons, text="Aceptar", command=self._on_accept).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(buttons, text="Cancelar", command=self.dialog.destroy).pack(
+            side=tk.RIGHT, padx=5
+        )
+        ttk.Button(buttons, text="Aceptar", command=self._on_accept).pack(
+            side=tk.RIGHT, padx=5
+        )
 
         self.cap_entry.focus_set()
         self.dialog.bind("<Return>", lambda _: self._on_accept())
@@ -93,10 +106,18 @@ class EdgeDialog:
             return
         if ind_expr is not None:
             if ind_expr.is_zero is True:
-                messagebox.showerror("Entrada invalida", "La inductancia no puede ser cero.", parent=self.dialog)
+                messagebox.showerror(
+                    "Entrada invalida",
+                    "La inductancia no puede ser cero.",
+                    parent=self.dialog,
+                )
                 return
             if ind_expr.is_number and float(ind_expr.evalf()) == 0.0:
-                messagebox.showerror("Entrada invalida", "La inductancia no puede ser cero.", parent=self.dialog)
+                messagebox.showerror(
+                    "Entrada invalida",
+                    "La inductancia no puede ser cero.",
+                    parent=self.dialog,
+                )
                 return
         self.value = EdgeParameters(
             capacitance_expr=cap_expr,
@@ -148,7 +169,9 @@ class CircuitGraphApp:
         self._history_suspended = False
         self._node_drag_moved = False
         self._ground_drag_moved = False
-        self.status_var = tk.StringVar(value="Press 'n' to create nodes, 'c' to connect.")
+        self.status_var = tk.StringVar(
+            value="Press 'n' to create nodes, 'c' to connect."
+        )
 
         self._build_ui()
         self._bind_shortcuts()
@@ -162,8 +185,12 @@ class CircuitGraphApp:
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.canvas.bind("<Button-1>", self._handle_canvas_click)
         self.canvas.bind("<Control-MouseWheel>", self._handle_zoom)
-        self.canvas.bind("<Control-Button-4>", lambda event: self._handle_zoom(event, factor=1.1))
-        self.canvas.bind("<Control-Button-5>", lambda event: self._handle_zoom(event, factor=0.9))
+        self.canvas.bind(
+            "<Control-Button-4>", lambda event: self._handle_zoom(event, factor=1.1)
+        )
+        self.canvas.bind(
+            "<Control-Button-5>", lambda event: self._handle_zoom(event, factor=0.9)
+        )
         self.canvas.bind("<ButtonPress-2>", self._start_pan)
         self.canvas.bind("<B2-Motion>", self._perform_pan)
         self.canvas.bind("<ButtonRelease-2>", self._end_pan)
@@ -174,13 +201,31 @@ class CircuitGraphApp:
         status_label = ttk.Label(overlay, textvariable=self.status_var)
         status_label.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 6))
 
-        ttk.Button(overlay, text="Modo nodo", command=lambda: self._set_mode("node")).grid(row=1, column=0, padx=2)
-        ttk.Button(overlay, text="Modo enlace", command=lambda: self._set_mode("edge")).grid(row=1, column=1, padx=2)
-        ttk.Button(overlay, text="A masa", command=lambda: self._set_mode("ground")).grid(row=1, column=2, padx=2)
-        ttk.Button(overlay, text="Reiniciar", command=self._reset_all).grid(row=1, column=3, padx=2)
+        ttk.Button(
+            overlay, text="Modo nodo", command=lambda: self._set_mode("node")
+        ).grid(row=1, column=0, padx=2)
+        ttk.Button(
+            overlay, text="Modo enlace", command=lambda: self._set_mode("edge")
+        ).grid(row=1, column=1, padx=2)
+        ttk.Button(
+            overlay, text="Ground mode", command=lambda: self._set_mode("ground")
+        ).grid(row=1, column=2, padx=2)
+        ttk.Button(overlay, text="Reset", command=self._reset_all).grid(
+            row=1, column=3, padx=2
+        )
 
-        ttk.Button(overlay, text="Copiar snippet", command=self._copy_snippet).grid(row=2, column=0, columnspan=4, sticky="ew", pady=(6, 0))
-        ttk.Button(overlay, text="Duplicar seleccion", command=self._duplicate_selection).grid(row=3, column=0, columnspan=4, sticky="ew", pady=(6, 0))
+        ttk.Button(overlay, text="Copy snippet", command=self._copy_snippet).grid(
+            row=2, column=0, columnspan=4, sticky="ew", pady=(6, 0)
+        )
+        ttk.Button(
+            overlay, text="Concatenate selection", command=self._duplicate_selection
+        ).grid(row=3, column=0, columnspan=4, sticky="ew", pady=(6, 0))
+        ttk.Button(overlay, text="Save project", command=self._save_project).grid(
+            row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+        )
+        ttk.Button(overlay, text="Load project", command=self._load_project).grid(
+            row=4, column=2, columnspan=2, sticky="ew", pady=(6, 0)
+        )
 
     def _current_node_radius(self) -> float:
         return self.NODE_RADIUS * self.view_scale
@@ -202,6 +247,10 @@ class CircuitGraphApp:
         self.root.bind("<BackSpace>", lambda _: self._delete_focused_node())
         self.root.bind("<Control-z>", lambda event: self._undo())
         self.root.bind("<Command-z>", lambda event: self._undo())
+        self.root.bind("<Control-s>", lambda event: self._save_project())
+        self.root.bind("<Command-s>", lambda event: self._save_project())
+        self.root.bind("<Control-o>", lambda event: self._load_project())
+        self.root.bind("<Command-o>", lambda event: self._load_project())
 
     def _handle_canvas_click(self, event: tk.Event) -> None:
         if self.mode != "node":
@@ -384,13 +433,19 @@ class CircuitGraphApp:
         default_ind = ""
         if existing is not None:
             default_cap = existing.capacitance_text or (
-                str(existing.capacitance_expr) if existing.capacitance_expr is not None else ""
+                str(existing.capacitance_expr)
+                if existing.capacitance_expr is not None
+                else ""
             )
             default_ind = existing.inductance_text or (
-                str(existing.inductance_expr) if existing.inductance_expr is not None else ""
+                str(existing.inductance_expr)
+                if existing.inductance_expr is not None
+                else ""
             )
         node_name = self.nodes[node_id].name
-        dialog = EdgeDialog(self.root, node_name, "GND", default_cap or None, default_ind or None)
+        dialog = EdgeDialog(
+            self.root, node_name, "GND", default_cap or None, default_ind or None
+        )
         if dialog.value is None:
             self._update_status("Ground connection cancelled.")
             return
@@ -557,7 +612,9 @@ class CircuitGraphApp:
         default_ind = edge.inductance_text or (
             str(edge.inductance_expr) if edge.inductance_expr is not None else ""
         )
-        dialog = EdgeDialog(self.root, first_name, second_name, default_cap, default_ind)
+        dialog = EdgeDialog(
+            self.root, first_name, second_name, default_cap, default_ind
+        )
         if dialog.value is None:
             self._update_status("Connection edit cancelled.")
             return
@@ -590,7 +647,9 @@ class CircuitGraphApp:
         self.selected_nodes.discard(node_id)
         self.canvas.delete(node.circle_id)
         self.canvas.delete(node.label_id)
-        edges_to_remove = [edge_id for edge_id, edge in self.edges.items() if node_id in edge.nodes]
+        edges_to_remove = [
+            edge_id for edge_id, edge in self.edges.items() if node_id in edge.nodes
+        ]
         for edge_id in edges_to_remove:
             self._remove_edge(edge_id)
         self._update_scrollregion()
@@ -612,7 +671,11 @@ class CircuitGraphApp:
 
     def _duplicate_selection(self) -> None:
         if not self.selected_nodes:
-            messagebox.showinfo("Empty selection", "Select at least one node to concatenate.", parent=self.root)
+            messagebox.showinfo(
+                "Empty selection",
+                "Select at least one node to concatenate.",
+                parent=self.root,
+            )
             return
 
         selected_nodes = sorted(self.selected_nodes)
@@ -632,7 +695,9 @@ class CircuitGraphApp:
 
         block_width = max_x - min_x
         min_spacing = max(self._current_node_radius() * 4, 40.0 * self.view_scale)
-        dx = (block_width if block_width > 0 else self._current_node_radius() * 6) + min_spacing
+        dx = (
+            block_width if block_width > 0 else self._current_node_radius() * 6
+        ) + min_spacing
         dy = 0.0
 
         original_edges = [
@@ -640,7 +705,11 @@ class CircuitGraphApp:
             for edge in self.edges.values()
             if (
                 (edge.is_ground and edge.nodes[0] in selected_nodes)
-                or (not edge.is_ground and edge.nodes[0] in selected_nodes and edge.nodes[1] in selected_nodes)
+                or (
+                    not edge.is_ground
+                    and edge.nodes[0] in selected_nodes
+                    and edge.nodes[1] in selected_nodes
+                )
             )
         ]
 
@@ -656,7 +725,9 @@ class CircuitGraphApp:
         left_nodes = left_nodes[:pair_count]
         right_nodes = right_nodes[:pair_count]
         left_index_map = {node_id: idx for idx, node_id in enumerate(left_nodes)}
-        current_tail_map: Dict[int, int] = {idx: right_nodes[idx] for idx in range(pair_count)}
+        current_tail_map: Dict[int, int] = {
+            idx: right_nodes[idx] for idx in range(pair_count)
+        }
         left_boundary_set = set(left_nodes)
 
         all_new_nodes: list[int] = []
@@ -692,7 +763,10 @@ class CircuitGraphApp:
                 if edge.is_ground:
                     source_idx = left_index_map.get(edge.nodes[0])
                     source_id = mapping.get(edge.nodes[0])
-                    if source_id is not None and not (source_idx is not None and source_id == current_tail_map[source_idx]):
+                    if source_id is not None and not (
+                        source_idx is not None
+                        and source_id == current_tail_map[source_idx]
+                    ):
                         self._instantiate_ground_edge(
                             source_id,
                             params,
@@ -719,7 +793,6 @@ class CircuitGraphApp:
         self._update_scrollregion()
         self._push_history()
         self._update_status("Concatenation complete.")
-
 
     def _apply_edge_parameters(self, edge: Edge, params: EdgeParameters) -> None:
         edge.capacitance_expr = params.capacitance_expr
@@ -784,7 +857,9 @@ class CircuitGraphApp:
         tag = f"edge_{edge_id}"
         x1, y1 = self.nodes[first].x, self.nodes[first].y
         x2, y2 = self.nodes[second].x, self.nodes[second].y
-        line = self.canvas.create_line(x1, y1, x2, y2, width=2, fill="#424242", tags=("edge", tag))
+        line = self.canvas.create_line(
+            x1, y1, x2, y2, width=2, fill="#424242", tags=("edge", tag)
+        )
         radius = self._current_edge_center_radius()
         center_x = (x1 + x2) / 2
         center_y = (y1 + y2) / 2
@@ -846,7 +921,9 @@ class CircuitGraphApp:
             self._update_status("Connection cancelled.")
             return
         self._instantiate_edge(first, second, dialog.value)
-        self._update_status("Connection created. Press 'c' for another or Esc to exit mode.")
+        self._update_status(
+            "Connection created. Press 'c' for another or Esc to exit mode."
+        )
         self._push_history()
 
     def _instantiate_ground_edge(
@@ -1046,7 +1123,9 @@ class CircuitGraphApp:
                         edge_data["nodes"][0],
                         params,
                         offset_x=edge_data.get("ground_offset_x", 0.0),
-                        offset_y=edge_data.get("ground_offset_y", self.GROUND_LINE_LENGTH),
+                        offset_y=edge_data.get(
+                            "ground_offset_y", self.GROUND_LINE_LENGTH
+                        ),
                         forced_id=edge_data["identifier"],
                     )
                 else:
@@ -1064,6 +1143,24 @@ class CircuitGraphApp:
             self._update_scrollregion()
         finally:
             self._history_suspended = False
+
+    def _expr_to_string(self, expr: Optional[sp.Expr]) -> Optional[str]:
+        if expr is None:
+            return None
+        return sp.srepr(expr)
+
+    def _expr_from_string(self, text: Optional[str]) -> Optional[sp.Expr]:
+        if text in (None, ""):
+            return None
+        try:
+            return sp.sympify(text, evaluate=False)
+        except Exception as exc:  # type: ignore[catching-non-exception]
+            messagebox.showerror(
+                "Load project",
+                f"Failed to parse expression '{text}':\n{exc}",
+                parent=self.root,
+            )
+            return None
 
     def _push_history(self) -> None:
         if self._history_suspended:
@@ -1084,6 +1181,70 @@ class CircuitGraphApp:
         self._restore_state(snapshot)
         self._refresh_all_node_appearances()
         self._update_status("Action undone.")
+
+    def _save_project(self) -> None:
+        filename = filedialog.asksaveasfilename(
+            title="Save project",
+            defaultextension=".json",
+            filetypes=[("Circuit project", "*.json"), ("All files", "*.*")],
+            parent=self.root,
+        )
+        if not filename:
+            return
+
+        snapshot = copy.deepcopy(self._snapshot_state())
+        for edge in snapshot.get("edges", []):
+            edge["capacitance_expr"] = self._expr_to_string(
+                edge.get("capacitance_expr")
+            )
+            edge["inductance_expr"] = self._expr_to_string(edge.get("inductance_expr"))
+            edge["l_inverse_expr"] = self._expr_to_string(edge.get("l_inverse_expr"))
+
+        data = {"version": 1, "state": snapshot}
+        try:
+            Path(filename).write_text(json.dumps(data, indent=2))
+        except OSError as exc:
+            messagebox.showerror(
+                "Save project", f"Could not save file:\n{exc}", parent=self.root
+            )
+            return
+
+        self._update_status(f"Project saved to {Path(filename).name}.")
+
+    def _load_project(self) -> None:
+        filename = filedialog.askopenfilename(
+            title="Load project",
+            defaultextension=".json",
+            filetypes=[("Circuit project", "*.json"), ("All files", "*.*")],
+            parent=self.root,
+        )
+        if not filename:
+            return
+
+        try:
+            data = json.loads(Path(filename).read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            messagebox.showerror(
+                "Load project", f"Could not load file:\n{exc}", parent=self.root
+            )
+            return
+
+        state = data.get("state", data)
+        state.setdefault("selected_nodes", [])
+        for edge in state.get("edges", []):
+            edge["capacitance_expr"] = self._expr_from_string(
+                edge.get("capacitance_expr")
+            )
+            edge["inductance_expr"] = self._expr_from_string(
+                edge.get("inductance_expr")
+            )
+            edge["l_inverse_expr"] = self._expr_from_string(edge.get("l_inverse_expr"))
+
+        current_snapshot = copy.deepcopy(self._snapshot_state())
+        self._restore_state(state)
+        new_snapshot = copy.deepcopy(self._snapshot_state())
+        self.history = [current_snapshot, new_snapshot]
+        self._update_status(f"Project loaded from {Path(filename).name}.")
 
     def _edge_label(
         self,
@@ -1191,7 +1352,9 @@ class CircuitGraphApp:
     def _reset_all(self) -> None:
         if not self.nodes and not self.edges:
             return
-        if not messagebox.askyesno("Reiniciar", "¿Eliminar todos los nodos y conexiones?", parent=self.root):
+        if not messagebox.askyesno(
+            "Reiniciar", "¿Eliminar todos los nodos y conexiones?", parent=self.root
+        ):
             return
         self.canvas.delete("all")
         self.nodes.clear()
@@ -1240,7 +1403,9 @@ class CircuitGraphApp:
                 l_inv_matrix[j, i] -= value
         return sp.Matrix(c_matrix), sp.Matrix(l_inv_matrix)
 
-    def _matrix_function_snippet(self, func_name: str, matrix: sp.Matrix) -> Tuple[list[str], list[str]]:
+    def _matrix_function_snippet(
+        self, func_name: str, matrix: sp.Matrix
+    ) -> Tuple[list[str], list[str]]:
         symbols = sorted(matrix.free_symbols, key=lambda sym: sym.name)
         param_names = [symbol.name for symbol in symbols]
         args = ", ".join(param_names)
@@ -1259,7 +1424,11 @@ class CircuitGraphApp:
 
     def _copy_snippet(self) -> None:
         if not self.nodes:
-            messagebox.showinfo("Sin datos", "Crea al menos un nodo para generar las matrices.", parent=self.root)
+            messagebox.showinfo(
+                "Sin datos",
+                "Crea al menos un nodo para generar las matrices.",
+                parent=self.root,
+            )
             return
         c_matrix, l_inv_matrix = self._compute_matrices()
         snippet_lines = [
@@ -1268,13 +1437,19 @@ class CircuitGraphApp:
             "",
         ]
 
-        c_func_lines, c_params = self._matrix_function_snippet("C_matrix_func", c_matrix)
-        l_func_lines, l_params = self._matrix_function_snippet("L_inv_matrix_func", l_inv_matrix)
+        c_func_lines, c_params = self._matrix_function_snippet(
+            "C_matrix_func", c_matrix
+        )
+        l_func_lines, l_params = self._matrix_function_snippet(
+            "L_inv_matrix_func", l_inv_matrix
+        )
 
         if c_params:
             snippet_lines.append(f"# C_matrix_func parameters: {', '.join(c_params)}")
         if l_params:
-            snippet_lines.append(f"# L_inv_matrix_func parameters: {', '.join(l_params)}")
+            snippet_lines.append(
+                f"# L_inv_matrix_func parameters: {', '.join(l_params)}"
+            )
         if c_params or l_params:
             snippet_lines.append("")
 
