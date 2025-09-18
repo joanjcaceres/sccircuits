@@ -152,6 +152,22 @@ class CircuitGraphApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
         self.root.title("BBQ Matrix Builder")
+        
+        # Set window size to be larger and screen-independent
+        window_width = 1200
+        window_height = 800
+        self.root.geometry(f"{window_width}x{window_height}")
+        
+        # Center the window on screen
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        
+        # Set minimum window size
+        self.root.minsize(800, 600)
+        
         self.nodes: Dict[int, Node] = {}
         self.edges: Dict[int, Edge] = {}
         self.node_counter = 0
