@@ -62,12 +62,12 @@ class EdgeDialog:
         self.dialog = tk.Toplevel(parent)
         self.dialog.transient(parent)
         self.dialog.grab_set()
-        self.dialog.title("Valores del enlace")
-        ttk.Label(self.dialog, text=f"Entre {first} y {second}").grid(
+        self.dialog.title("Edge Values")
+        ttk.Label(self.dialog, text=f"Between {first} and {second}").grid(
             row=0, column=0, columnspan=2, padx=10, pady=(10, 5)
         )
 
-        ttk.Label(self.dialog, text="Capacitancia (F)").grid(
+        ttk.Label(self.dialog, text="Capacitance (F)").grid(
             row=1, column=0, sticky=tk.W, padx=10
         )
         self.cap_entry = ttk.Entry(self.dialog, width=18)
@@ -75,7 +75,7 @@ class EdgeDialog:
         if default_cap:
             self.cap_entry.insert(0, default_cap)
 
-        ttk.Label(self.dialog, text="Inductancia (H)").grid(
+        ttk.Label(self.dialog, text="Inductance (H)").grid(
             row=2, column=0, sticky=tk.W, padx=10
         )
         self.ind_entry = ttk.Entry(self.dialog, width=18)
@@ -85,10 +85,10 @@ class EdgeDialog:
 
         buttons = ttk.Frame(self.dialog)
         buttons.grid(row=3, column=0, columnspan=2, pady=10)
-        ttk.Button(buttons, text="Cancelar", command=self.dialog.destroy).pack(
+        ttk.Button(buttons, text="Cancel", command=self.dialog.destroy).pack(
             side=tk.RIGHT, padx=5
         )
-        ttk.Button(buttons, text="Aceptar", command=self._on_accept).pack(
+        ttk.Button(buttons, text="Accept", command=self._on_accept).pack(
             side=tk.RIGHT, padx=5
         )
 
@@ -102,20 +102,20 @@ class EdgeDialog:
             cap_expr, cap_text = self._parse_expression(self.cap_entry.get())
             ind_expr, ind_text = self._parse_expression(self.ind_entry.get())
         except ValueError as exc:
-            messagebox.showerror("Entrada invalida", str(exc), parent=self.dialog)
+            messagebox.showerror("Invalid input", str(exc), parent=self.dialog)
             return
         if ind_expr is not None:
             if ind_expr.is_zero is True:
                 messagebox.showerror(
-                    "Entrada invalida",
-                    "La inductancia no puede ser cero.",
+                    "Invalid input",
+                    "Inductance cannot be zero.",
                     parent=self.dialog,
                 )
                 return
             if ind_expr.is_number and float(ind_expr.evalf()) == 0.0:
                 messagebox.showerror(
-                    "Entrada invalida",
-                    "La inductancia no puede ser cero.",
+                    "Invalid input",
+                    "Inductance cannot be zero.",
                     parent=self.dialog,
                 )
                 return
@@ -135,9 +135,9 @@ class EdgeDialog:
         try:
             expr = sp.sympify(stripped)
         except (sp.SympifyError, TypeError) as exc:
-            raise ValueError("Introduce un numero o expresion valida.") from exc
+            raise ValueError("Please enter a valid number or expression.") from exc
         if expr.is_real is False:
-            raise ValueError("Solo se admiten valores reales.")
+            raise ValueError("Only real values are allowed.")
         expr = sp.simplify(expr)
         return expr, stripped
 
@@ -458,7 +458,7 @@ class CircuitGraphApp:
             changed = True
         else:
             self._create_ground_edge(node_id, dialog.value)
-            self._update_status(f"Nodo {node_name} conectado a masa.")
+            self._update_status(f"Node {node_name} connected to ground.")
             changed = True
         if changed:
             self._push_history()
@@ -913,10 +913,10 @@ class CircuitGraphApp:
         if existing is not None:
             if not messagebox.askyesno(
                 "Enlace existente",
-                "Ya existe una conexion entre estos nodos.\n¿Deseas crear otra en paralelo?",
+                "A connection between these nodes already exists.\nDo you want to create another one in parallel?",
                 parent=self.root,
             ):
-                self._update_status("Se mantuvo la conexion original.")
+                self._update_status("Original connection maintained.")
                 return
         dialog = EdgeDialog(self.root, first_name, second_name)
         if dialog.value is None:
@@ -1176,7 +1176,7 @@ class CircuitGraphApp:
 
     def _undo(self) -> None:
         if len(self.history) <= 1:
-            self._update_status("No hay acciones para deshacer.")
+            self._update_status("No actions to undo.")
             return
         self.history.pop()
         snapshot = copy.deepcopy(self.history[-1])
@@ -1355,7 +1355,7 @@ class CircuitGraphApp:
         if not self.nodes and not self.edges:
             return
         if not messagebox.askyesno(
-            "Reiniciar", "¿Eliminar todos los nodos y conexiones?", parent=self.root
+            "Reset", "Delete all nodes and connections?", parent=self.root
         ):
             return
         self.canvas.delete("all")
@@ -1427,8 +1427,8 @@ class CircuitGraphApp:
     def _copy_snippet(self) -> None:
         if not self.nodes:
             messagebox.showinfo(
-                "Sin datos",
-                "Crea al menos un nodo para generar las matrices.",
+                "No data",
+                "Create at least one node to generate the matrices.",
                 parent=self.root,
             )
             return
@@ -1461,7 +1461,7 @@ class CircuitGraphApp:
         snippet = "\n".join(snippet_lines)
         self.root.clipboard_clear()
         self.root.clipboard_append(snippet)
-        self._update_status("Snippet copiado al portapapeles.")
+        self._update_status("Snippet copied to clipboard.")
 
     def _update_status(self, message: str) -> None:
         self.status_var.set(message)
