@@ -202,10 +202,10 @@ class CircuitGraphApp:
         status_label.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 6))
 
         ttk.Button(
-            overlay, text="Modo nodo", command=lambda: self._set_mode("node")
+            overlay, text="Node mode", command=lambda: self._set_mode("node")
         ).grid(row=1, column=0, padx=2)
         ttk.Button(
-            overlay, text="Modo enlace", command=lambda: self._set_mode("edge")
+            overlay, text="Edge mode", command=lambda: self._set_mode("edge")
         ).grid(row=1, column=1, padx=2)
         ttk.Button(
             overlay, text="Ground mode", command=lambda: self._set_mode("ground")
@@ -264,7 +264,9 @@ class CircuitGraphApp:
         self._set_focus_node(None)
         self._clear_selection()
         name = self._generate_default_node_name()
-        new_node_id = self._add_node(event.x, event.y, name)
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
+        new_node_id = self._add_node(canvas_x, canvas_y, name)
         self.selected_nodes = {new_node_id}
         self._set_focus_node(new_node_id)
         self._push_history()
@@ -275,7 +277,7 @@ class CircuitGraphApp:
                 return
             factor = 1.1 if event.delta > 0 else 0.9
         new_scale = self.view_scale * factor
-        min_scale, max_scale = 0.3, 4.0
+        min_scale, max_scale = 0.05, 6.0
         if new_scale < min_scale:
             factor = min_scale / self.view_scale
             new_scale = min_scale
