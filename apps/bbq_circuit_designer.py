@@ -663,8 +663,17 @@ class CircuitGraphApp:
 
     def _edit_edge(self, edge_id: int) -> None:
         edge = self.edges[edge_id]
-        first_name = self.nodes[edge.nodes[0]].name
-        second_name = self.nodes[edge.nodes[1]].name
+        first_node = self.nodes[edge.nodes[0]]
+        first_name = first_node.name
+
+        if edge.is_ground:
+            second_name = "GND"
+        else:
+            try:
+                second_name = self.nodes[edge.nodes[1]].name
+            except KeyError:
+                second_name = f"Node {edge.nodes[1]}"
+
         default_cap = edge.capacitance_text or (
             str(edge.capacitance_expr) if edge.capacitance_expr is not None else ""
         )
@@ -677,6 +686,17 @@ class CircuitGraphApp:
         if dialog.value is None:
             self._update_status("Connection edit cancelled.")
             return
+
+        if edge.is_ground and (
+            dialog.value.capacitance_expr is None and dialog.value.inductance_expr is None
+        ):
+            self._remove_edge(edge_id)
+            self._set_focus_node(None)
+            self._refresh_all_node_appearances()
+            self._push_history()
+            self._update_status(f"Ground connection removed from {first_name}.")
+            return
+
         self._apply_edge_parameters(edge, dialog.value)
         self._update_status("Connection updated.")
         self._push_history()
