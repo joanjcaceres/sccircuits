@@ -211,34 +211,31 @@ class Circuit:
             # Step 1: Add initial fermionic mode
             H_fermion = self._fermionic_hamiltonian()  # 2x2 fermionic Hamiltonian
             
-            # Fermionic coupling operator: c† for coupling to bosonic mode
+            # Fermionic operators: c† couples to bosonic mode, track c
             fermionic_creation_op = np.array([[0, 0], [1, 0]], dtype=float)
+            fermionic_annihilation_op = fermionic_creation_op.T.conj()
             
             iterator.add_initial_mode(
                 H_fermion,
-                fermionic_creation_op,  # This will couple to the bosonic mode
+                fermionic_creation_op,  # Couples to bosonic mode
+                tracked_operators={"a_fermion": fermionic_annihilation_op},
             )
             
             # Step 2: Add bosonic non-linear mode (coupled to fermion)
-            # Get hamiltonian and coupling operators efficiently in one call
-            if self.modes > 1:
-                hamiltonian_nl, cos_half_op, collective_creation_operator = self.hamiltonian_nl(phase_ext, return_coupling_ops=True)
-                next_coupling_op = collective_creation_operator  # For coupling to next bosonic mode
-            else:
-                hamiltonian_nl = self.hamiltonian_nl(phase_ext)
-                # Still need cos_half_op for coupling to fermion
-                dimension_bosonic = self.dimensions[0]
-                data = np.sqrt(np.arange(1, dimension_bosonic))
-                phi_op = self.non_linear_phase_zpf * diags([data, data], [1, -1]).toarray()
-                
-                cos_half_op = cosm(phi_op / 2)
-                next_coupling_op = None
+            hamiltonian_nl, cos_half_op, collective_creation_operator = self.hamiltonian_nl(
+                phase_ext, return_coupling_ops=True
+            )
+            collective_annihilation_operator = collective_creation_operator.conj().T
+            next_coupling_op = (
+                collective_creation_operator if self.modes > 1 else None
+            )
             
             iterator.add_mode(
                 hamiltonian_nl,
                 cos_half_op,           # Couples to fermionic c†  
                 next_coupling_op,      # For next bosonic coupling
-                self.Gamma             # Coupling strength
+                self.Gamma,            # Coupling strength
+                tracked_operators={"a_mode0": collective_annihilation_operator},
             )
             
             # Step 3: Add remaining bosonic modes
@@ -252,6 +249,7 @@ class Circuit:
                 # Current mode's coupling operator (couples to previous mode)
                 data = np.sqrt(np.arange(1, self.dimensions[idx + 1]))
                 linear_destroy_op_k = diags([data], [1], dtype=np.float64)
+                linear_annihilation_op_k = linear_destroy_op_k.T.conj()
                                 
                 # Coupling operator for next mode (if this is not the last mode)
                 if idx < remaining_bosonic_modes - 1:  # Not the last bosonic mode
@@ -264,23 +262,26 @@ class Circuit:
                     hamiltonian_k, 
                     linear_destroy_op_k,      # Couples to previous mode
                     coupling_operator_next,   # Will couple to next mode (if any)
-                    self.linear_coupling[idx] # Coupling strength
+                    self.linear_coupling[idx], # Coupling strength
+                    tracked_operators={f"a_mode{idx + 1}": linear_annihilation_op_k},
                 )
-        
+
         else:
             # ORIGINAL ARCHITECTURE: Start with bosonic mode (no fermion)
             
             # Calculate hamiltonian and coupling operators
-            if self.modes > 1:
-                hamiltonian_0, cos_half_op, collective_creation_operator = self.hamiltonian_nl(phase_ext, return_coupling_ops=True)
-                initial_coupling_op = collective_creation_operator  # Use creation operator for bosonic coupling
-            else:
-                hamiltonian_0 = self.hamiltonian_nl(phase_ext)
-                initial_coupling_op = None
-                
+            hamiltonian_0, cos_half_op, collective_creation_operator = self.hamiltonian_nl(
+                phase_ext, return_coupling_ops=True
+            )
+            initial_coupling_op = (
+                collective_creation_operator if self.modes > 1 else None
+            )
+            collective_annihilation_operator = collective_creation_operator.conj().T
+
             iterator.add_initial_mode(
                 hamiltonian_0,
                 initial_coupling_op,
+                tracked_operators={"a_mode0": collective_annihilation_operator},
             )
             
             # Add remaining bosonic modes (standard logic)
@@ -294,6 +295,7 @@ class Circuit:
                 # Current mode's coupling operator (couples to previous mode)
                 data = np.sqrt(np.arange(1, self.dimensions[idx + 1]))
                 linear_destroy_op_k = diags([data], [1], dtype=np.float64)
+                linear_annihilation_op_k = linear_destroy_op_k.T.conj()
                 
                 # Coupling operator for next mode (if this is not the last mode)
                 if idx < remaining_bosonic_modes - 1:  # Not the last bosonic mode
@@ -306,7 +308,8 @@ class Circuit:
                     hamiltonian_k, 
                     linear_destroy_op_k,      # Couples to previous mode
                     coupling_operator_next,   # Will couple to next mode (if any)
-                    self.linear_coupling[idx] # Coupling strength
+                    self.linear_coupling[idx], # Coupling strength
+                    tracked_operators={f"a_mode{idx + 1}": linear_annihilation_op_k},
                 )
 
         # Store the diagonalizer for access to basis transformations
@@ -347,6 +350,37 @@ class Circuit:
             raise AttributeError("No eigensystem calculation found. Call eigensystem() first.")
         
         return self._last_diagonalizer.get_basis_transformations()
+
+    def get_tracked_operators(self) -> dict[str, np.ndarray]:
+        """
+        Retrieve all operators tracked during the last eigensystem call.
+
+        Returns:
+            dict[str, np.ndarray]: Mapping from operator names to matrices
+            expressed in the truncated eigenbasis.
+        """
+        if not hasattr(self, '_last_diagonalizer') or self._last_diagonalizer is None:
+            raise AttributeError("No eigensystem calculation found. Call eigensystem() first.")
+
+        return self._last_diagonalizer.get_tracked_operators()
+
+    def get_annihilation_operator(self, name: str) -> np.ndarray:
+        """
+        Convenience accessor for a specific tracked annihilation operator.
+
+        Args:
+            name (str): Operator identifier (e.g., 'a_mode0', 'a_fermion').
+
+        Returns:
+            np.ndarray: Operator matrix in the truncated eigenbasis.
+        """
+        operators = self.get_tracked_operators()
+        if name not in operators:
+            available = ', '.join(sorted(operators.keys())) or 'none'
+            raise KeyError(
+                f"Operator '{name}' is not available. Available operators: {available}."
+            )
+        return operators[name]
 
     # def _non_collective_eigsystem(self) -> np.ndarray:
     #     """
@@ -416,4 +450,3 @@ if __name__ == "__main__":
     print(f"\nLowest 5 energies (basic): {energies_basic[:5]}")
     print(f"Lowest 5 energies (with fermion): {energies_with_fermion[:5]}")
     print("\n✅ Implementation successful!")
-
