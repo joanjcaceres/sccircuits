@@ -214,7 +214,7 @@ class IterativeHamiltonianDiagonalizer:
 
     def _build_total_hamiltonian_sequential(
         self,
-        hk: np.ndarray,
+        new_hamiltonian: np.ndarray,
         prev_coupling: np.ndarray,
         current_coupling: np.ndarray,
         coupling_strength: float,
@@ -225,7 +225,7 @@ class IterativeHamiltonianDiagonalizer:
         Build the total Hamiltonian for sequential coupling (each mode couples only to the next).
 
         Args:
-            hk (np.ndarray): Hamiltonian of the new mode.
+            new_hamiltonian (np.ndarray): Hamiltonian of the new mode.
             prev_coupling (np.ndarray): Effective coupling operator from the previous mode.
             current_coupling (np.ndarray): Coupling operator for the current mode.
             coupling_strength (float): Coupling strength.
@@ -249,7 +249,7 @@ class IterativeHamiltonianDiagonalizer:
         # Build total Hamiltonian: H_prev⊗I_new + I_prev⊗hk + g * (X_prev_eff⊗X_current + h.c.)
         H_total = (
             sparse.kron(H_prev_sp, I_new_sp)
-            + sparse.kron(I_prev_sp, hk)
+            + sparse.kron(I_prev_sp, new_hamiltonian)
             + coupling_term
         )
 
