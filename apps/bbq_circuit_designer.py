@@ -4,12 +4,48 @@ import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
+from types import SimpleNamespace
 from typing import Dict, Optional, Tuple
 
 import sympy as sp
 from sympy.printing.pycode import pycode
 
 GROUND_NODE_ID = -1
+
+
+class ToolTip:
+    def __init__(self, widget: tk.Widget, text: str):
+        self.widget = widget
+        self.text = text
+        self.tipwindow: Optional[tk.Toplevel] = None
+        self.widget.bind("<Enter>", self._show)
+        self.widget.bind("<Leave>", self._hide)
+
+    def _show(self, _event: tk.Event) -> None:
+        if self.tipwindow is not None:
+            return
+        if not self.text:
+            return
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+        self.tipwindow = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = ttk.Label(
+            tw,
+            text=self.text,
+            background="#333333",
+            foreground="white",
+            relief=tk.SOLID,
+            borderwidth=1,
+            padding=(6, 2),
+        )
+        label.pack()
+
+    def _hide(self, _event: tk.Event) -> None:
+        if self.tipwindow is not None:
+            self.tipwindow.destroy()
+            self.tipwindow = None
 
 
 @dataclass
@@ -152,22 +188,22 @@ class CircuitGraphApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
         self.root.title("BBQ Matrix Builder")
-        
+
         # Set window size to be larger and screen-independent
         window_width = 1200
         window_height = 800
         self.root.geometry(f"{window_width}x{window_height}")
-        
+
         # Center the window on screen
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         x = (screen_width - window_width) // 2
         y = (screen_height - window_height) // 2
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
-        
+
         # Set minimum window size
         self.root.minsize(800, 600)
-        
+
         self.nodes: Dict[int, Node] = {}
         self.edges: Dict[int, Edge] = {}
         self.node_counter = 0
@@ -200,10 +236,89 @@ class CircuitGraphApp:
 
     def _build_ui(self) -> None:
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=0)
+        self.root.rowconfigure(1, weight=1)
+        self.root.rowconfigure(2, weight=0)
+
+        toolbar = ttk.Frame(self.root, padding=(8, 6))
+        toolbar.grid(row=0, column=0, sticky="ew")
+
+        self._create_toolbar_button(
+            toolbar,
+            text="Node",
+            command=lambda: self._set_mode("node"),
+            tooltip="Node mode — click on the canvas to create nodes.",
+            shortcut="N",
+        )
+        self._create_toolbar_button(
+            toolbar,
+            text="Edge",
+            command=lambda: self._set_mode("edge"),
+            tooltip="Edge mode — click two nodes to connect them.",
+            shortcut="C",
+        )
+        self._create_toolbar_button(
+            toolbar,
+            text="Ground",
+            command=lambda: self._set_mode("ground"),
+            tooltip="Ground mode — select a node to add/remove ground connection.",
+            shortcut="G",
+        )
+        self._create_toolbar_button(
+            toolbar,
+            text="Reset",
+            command=self._reset_all,
+            tooltip="Clear all nodes and connections.",
+        )
+
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+
+        self._create_toolbar_button(
+            toolbar,
+            text="Copy",
+            command=self._copy_selection,
+            tooltip="Copy selected nodes.",
+            shortcut="Ctrl/Cmd+C",
+        )
+        self._create_toolbar_button(
+            toolbar,
+            text="Paste",
+            command=lambda: self._start_paste_preview_fake(),
+            tooltip="Paste copied nodes at cursor.",
+            shortcut="Ctrl/Cmd+V",
+        )
+        self._create_toolbar_button(
+            toolbar,
+            text="Concatenate",
+            command=self._duplicate_selection,
+            tooltip="Repeat the selected block to the right.",
+        )
+
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+
+        self._create_toolbar_button(
+            toolbar,
+            text="Save",
+            command=self._save_project,
+            tooltip="Save project (Ctrl/Cmd+S).",
+            shortcut="Ctrl/Cmd+S",
+        )
+        self._create_toolbar_button(
+            toolbar,
+            text="Load",
+            command=self._load_project,
+            tooltip="Load project (Ctrl/Cmd+O).",
+            shortcut="Ctrl/Cmd+O",
+        )
+        self._create_toolbar_button(
+            toolbar,
+            text="Snippet",
+            command=self._copy_snippet,
+            tooltip="Copy NumPy/SymPy snippet to clipboard.",
+        )
 
         self.canvas = tk.Canvas(self.root, bg="white")
-        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.canvas.grid(row=1, column=0, sticky="nsew")
         self.canvas.bind("<ButtonPress-1>", self._on_canvas_button_press)
         self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_canvas_button_release)
@@ -218,37 +333,24 @@ class CircuitGraphApp:
         self.canvas.bind("<B2-Motion>", self._perform_pan)
         self.canvas.bind("<ButtonRelease-2>", self._end_pan)
 
-        overlay = ttk.Frame(self.root, padding=8)
-        overlay.place(relx=0.02, rely=0.02)
+        status_bar = ttk.Frame(self.root, padding=(8, 4))
+        status_bar.grid(row=2, column=0, sticky="ew")
+        status_label = ttk.Label(status_bar, textvariable=self.status_var)
+        status_label.pack(side=tk.LEFT)
 
-        status_label = ttk.Label(overlay, textvariable=self.status_var)
-        status_label.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 6))
-
-        ttk.Button(
-            overlay, text="Node mode", command=lambda: self._set_mode("node")
-        ).grid(row=1, column=0, padx=2)
-        ttk.Button(
-            overlay, text="Edge mode", command=lambda: self._set_mode("edge")
-        ).grid(row=1, column=1, padx=2)
-        ttk.Button(
-            overlay, text="Ground mode", command=lambda: self._set_mode("ground")
-        ).grid(row=1, column=2, padx=2)
-        ttk.Button(overlay, text="Reset", command=self._reset_all).grid(
-            row=1, column=3, padx=2
-        )
-
-        ttk.Button(overlay, text="Copy snippet", command=self._copy_snippet).grid(
-            row=2, column=0, columnspan=4, sticky="ew", pady=(6, 0)
-        )
-        ttk.Button(
-            overlay, text="Concatenate selection", command=self._duplicate_selection
-        ).grid(row=3, column=0, columnspan=4, sticky="ew", pady=(6, 0))
-        ttk.Button(overlay, text="Save project", command=self._save_project).grid(
-            row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0)
-        )
-        ttk.Button(overlay, text="Load project", command=self._load_project).grid(
-            row=4, column=2, columnspan=2, sticky="ew", pady=(6, 0)
-        )
+    def _create_toolbar_button(
+        self,
+        parent: ttk.Frame,
+        text: str,
+        command,
+        tooltip: str,
+        shortcut: Optional[str] = None,
+    ) -> ttk.Button:
+        btn = ttk.Button(parent, text=text, command=command)
+        btn.pack(side=tk.LEFT, padx=2)
+        tip_text = f"{tooltip}{' (' + shortcut + ')' if shortcut else ''}"
+        ToolTip(btn, tip_text)
+        return btn
 
     def _current_node_radius(self) -> float:
         return self.NODE_RADIUS * self.view_scale
@@ -688,7 +790,8 @@ class CircuitGraphApp:
             return
 
         if edge.is_ground and (
-            dialog.value.capacitance_expr is None and dialog.value.inductance_expr is None
+            dialog.value.capacitance_expr is None
+            and dialog.value.inductance_expr is None
         ):
             self._remove_edge(edge_id)
             self._set_focus_node(None)
@@ -1430,9 +1533,13 @@ class CircuitGraphApp:
                     clipboard_edges.append(
                         {
                             "nodes": list(edge.nodes),
-                            "capacitance_expr": self._expr_to_string(edge.capacitance_expr),
+                            "capacitance_expr": self._expr_to_string(
+                                edge.capacitance_expr
+                            ),
                             "capacitance_text": edge.capacitance_text,
-                            "inductance_expr": self._expr_to_string(edge.inductance_expr),
+                            "inductance_expr": self._expr_to_string(
+                                edge.inductance_expr
+                            ),
                             "inductance_text": edge.inductance_text,
                             "is_ground": True,
                             "ground_offset_x": edge.ground_offset_x,
@@ -1440,13 +1547,20 @@ class CircuitGraphApp:
                         }
                     )
             else:
-                if edge.nodes[0] in self.selected_nodes and edge.nodes[1] in self.selected_nodes:
+                if (
+                    edge.nodes[0] in self.selected_nodes
+                    and edge.nodes[1] in self.selected_nodes
+                ):
                     clipboard_edges.append(
                         {
                             "nodes": list(edge.nodes),
-                            "capacitance_expr": self._expr_to_string(edge.capacitance_expr),
+                            "capacitance_expr": self._expr_to_string(
+                                edge.capacitance_expr
+                            ),
                             "capacitance_text": edge.capacitance_text,
-                            "inductance_expr": self._expr_to_string(edge.inductance_expr),
+                            "inductance_expr": self._expr_to_string(
+                                edge.inductance_expr
+                            ),
                             "inductance_text": edge.inductance_text,
                             "is_ground": False,
                         }
@@ -1516,6 +1630,16 @@ class CircuitGraphApp:
             self._update_status("Selection cleared.")
         self._refresh_all_node_appearances()
 
+    def _start_paste_preview_fake(self) -> None:
+        if self.clipboard_data is None:
+            self._update_status("Clipboard is empty.")
+            return
+        self.root.update_idletasks()
+        width = self.canvas.winfo_width() or 600
+        height = self.canvas.winfo_height() or 400
+        event = SimpleNamespace(x=width / 2, y=height / 2)
+        self._start_paste_preview(event)
+
     def _start_paste_preview(self, event: tk.Event) -> None:
         if self.clipboard_data is None:
             self._update_status("Clipboard is empty.")
@@ -1552,12 +1676,22 @@ class CircuitGraphApp:
                 fill="#ff9800",
                 anchor=tk.W,
             )
-            ghost_nodes.append({"id": node["id"], "oval": oval, "label": label, "dx": node["dx"], "dy": node["dy"]})
+            ghost_nodes.append(
+                {
+                    "id": node["id"],
+                    "oval": oval,
+                    "label": label,
+                    "dx": node["dx"],
+                    "dy": node["dy"],
+                }
+            )
 
         ghost_edges = []
         for edge in edges:
             if edge.get("is_ground"):
-                source = next((gn for gn in ghost_nodes if gn["id"] == edge["nodes"][0]), None)
+                source = next(
+                    (gn for gn in ghost_nodes if gn["id"] == edge["nodes"][0]), None
+                )
                 if source is None:
                     continue
                 x = canvas_x + source["dx"]
@@ -1571,16 +1705,24 @@ class CircuitGraphApp:
                     dash=(3, 2),
                     width=2,
                 )
-                ghost_edges.append({
-                    "is_ground": True,
-                    "line": line,
-                    "source_id": edge["nodes"][0],
-                    "offset_x": edge.get("ground_offset_x", 0.0),
-                    "offset_y": edge.get("ground_offset_y", self.GROUND_LINE_LENGTH),
-                })
+                ghost_edges.append(
+                    {
+                        "is_ground": True,
+                        "line": line,
+                        "source_id": edge["nodes"][0],
+                        "offset_x": edge.get("ground_offset_x", 0.0),
+                        "offset_y": edge.get(
+                            "ground_offset_y", self.GROUND_LINE_LENGTH
+                        ),
+                    }
+                )
             else:
-                source = next((gn for gn in ghost_nodes if gn["id"] == edge["nodes"][0]), None)
-                target = next((gn for gn in ghost_nodes if gn["id"] == edge["nodes"][1]), None)
+                source = next(
+                    (gn for gn in ghost_nodes if gn["id"] == edge["nodes"][0]), None
+                )
+                target = next(
+                    (gn for gn in ghost_nodes if gn["id"] == edge["nodes"][1]), None
+                )
                 if source is None or target is None:
                     continue
                 line = self.canvas.create_line(
@@ -1592,12 +1734,14 @@ class CircuitGraphApp:
                     dash=(3, 2),
                     width=2,
                 )
-                ghost_edges.append({
-                    "is_ground": False,
-                    "line": line,
-                    "source_id": edge["nodes"][0],
-                    "target_id": edge["nodes"][1],
-                })
+                ghost_edges.append(
+                    {
+                        "is_ground": False,
+                        "line": line,
+                        "source_id": edge["nodes"][0],
+                        "target_id": edge["nodes"][1],
+                    }
+                )
 
         self._paste_preview = {
             "ghost_nodes": ghost_nodes,
@@ -1607,7 +1751,9 @@ class CircuitGraphApp:
         self._pasting_active = True
         self.canvas.bind("<Motion>", self._update_paste_preview, add="+")
         self.root.bind("<Escape>", self._cancel_paste_preview_event, add="+")
-        self._update_status("Move the mouse to place the copied selection, click to confirm or press Esc to cancel.")
+        self._update_status(
+            "Move the mouse to place the copied selection, click to confirm or press Esc to cancel."
+        )
 
     def _update_paste_preview(self, event: tk.Event) -> None:
         if not self._pasting_active or self._paste_preview is None:
@@ -1634,7 +1780,14 @@ class CircuitGraphApp:
 
         for ghost in self._paste_preview["ghost_edges"]:
             if ghost["is_ground"]:
-                source = next((n for n in self._paste_preview["ghost_nodes"] if n["id"] == ghost["source_id"]), None)
+                source = next(
+                    (
+                        n
+                        for n in self._paste_preview["ghost_nodes"]
+                        if n["id"] == ghost["source_id"]
+                    ),
+                    None,
+                )
                 if source is None:
                     continue
                 x = canvas_x + source["dx"]
@@ -1647,8 +1800,22 @@ class CircuitGraphApp:
                     y + ghost["offset_y"],
                 )
             else:
-                source = next((n for n in self._paste_preview["ghost_nodes"] if n["id"] == ghost["source_id"]), None)
-                target = next((n for n in self._paste_preview["ghost_nodes"] if n["id"] == ghost["target_id"]), None)
+                source = next(
+                    (
+                        n
+                        for n in self._paste_preview["ghost_nodes"]
+                        if n["id"] == ghost["source_id"]
+                    ),
+                    None,
+                )
+                target = next(
+                    (
+                        n
+                        for n in self._paste_preview["ghost_nodes"]
+                        if n["id"] == ghost["target_id"]
+                    ),
+                    None,
+                )
                 if source is None or target is None:
                     continue
                 self.canvas.coords(
@@ -1660,7 +1827,11 @@ class CircuitGraphApp:
                 )
 
     def _complete_paste_preview(self, canvas_x: float, canvas_y: float) -> None:
-        if not self._pasting_active or self._paste_preview is None or self.clipboard_data is None:
+        if (
+            not self._pasting_active
+            or self._paste_preview is None
+            or self.clipboard_data is None
+        ):
             return
 
         nodes = self.clipboard_data["nodes"]
