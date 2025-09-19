@@ -1,4 +1,5 @@
 import numpy as np
+from typing import Dict, Optional
 from scipy import sparse
 from scipy.linalg import eigh
 
@@ -57,7 +58,10 @@ class IterativeHamiltonianDiagonalizer:
 
 
     def add_initial_mode(
-        self, hamiltonian: np.ndarray, coupling_operator: np.ndarray = None
+        self,
+        hamiltonian: np.ndarray,
+        coupling_operator: np.ndarray = None,
+        tracked_operators: Optional[Dict[str, np.ndarray]] = None,
     ) -> None:
         """
         Diagonalize the first-mode Hamiltonian and optionally store its coupling operator.
@@ -66,6 +70,8 @@ class IterativeHamiltonianDiagonalizer:
             hamiltonian               (np.ndarray): Hamiltonian of the first mode, shape (d0, d0).
             coupling_operator (np.ndarray, optional): Operator coupling this mode to the next mode,
                                                      shape (d0, d0). Can be None if this is the last mode.
+            tracked_operators (dict[str, np.ndarray], optional): Operators defined on this mode that
+                                                                 should be tracked in the truncated basis.
         """
         self._current_mode = 0
         
@@ -75,7 +81,7 @@ class IterativeHamiltonianDiagonalizer:
         evals, evecs = eigh(hamiltonian, subset_by_index=(0, effective_truncation - 1))
         self.energies = evals
         self.basis_vectors = evecs
-        
+
         # Store the basis transformation matrix for this mode
         self._mode_basis_transformations[self._current_mode] = evecs.copy()
 
@@ -87,12 +93,24 @@ class IterativeHamiltonianDiagonalizer:
         else:
             self.effective_coupling = None
 
+        if tracked_operators:
+            for name, operator in tracked_operators.items():
+                operator_dense = self._ensure_dense(operator)
+                if operator_dense.shape != hamiltonian.shape:
+                    raise ValueError(
+                        f"Tracked operator '{name}' has shape {operator_dense.shape},"
+                        f" expected {hamiltonian.shape}."
+                    )
+                transformed = evecs.conj().T @ operator_dense @ evecs
+                self.tracked_operators[name] = transformed.copy()
+
     def add_mode(
         self,
         hamiltonian: np.ndarray,
         current_coupling_operator: np.ndarray,
         coupling_operator_next: np.ndarray = None,
         coupling_strength: float = 1.0,
+        tracked_operators: Optional[Dict[str, np.ndarray]] = None,
     ) -> None:
         """
         Add a new mode with sequential coupling: each mode couples only to the next mode.
@@ -104,6 +122,7 @@ class IterativeHamiltonianDiagonalizer:
             coupling_operator_next     (np.ndarray, optional): Operator for this mode that will couple to the next mode,
                                                    shape (dk, dk). Can be None if this is the last mode.
             coupling_strength            (float): Strength g_k of the coupling term between previous and current mode.
+            tracked_operators (dict[str, np.ndarray], optional): Operators defined on the new mode to be tracked.
         """
         self._current_mode += 1
         previous_dimension = len(self.energies)  # Use actual effective dimension from previous step
@@ -137,7 +156,7 @@ class IterativeHamiltonianDiagonalizer:
         evals, evecs = eigh(H_total, subset_by_index=(0, effective_truncation - 1))
         self.energies = evals
         self.basis_vectors = evecs
-        
+
         # Store the basis transformation matrix for this mode
         self._mode_basis_transformations[self._current_mode] = evecs.copy()
 
@@ -164,6 +183,34 @@ class IterativeHamiltonianDiagonalizer:
             self.effective_coupling = effective_coupling
         else:
             self.effective_coupling = None
+
+        # Update already tracked operators (they act on previous truncated space)
+        if self.tracked_operators:
+            identity_new = np.eye(new_dimension)
+            updated_operators = {}
+            for name, operator in self.tracked_operators.items():
+                operator_extended = np.kron(operator, identity_new)
+                transformed = evecs.conj().T @ operator_extended @ evecs
+                updated_operators[name] = transformed.copy()
+            self.tracked_operators = updated_operators
+
+        # Register new operators provided for this mode
+        if tracked_operators:
+            identity_prev = np.eye(previous_dimension)
+            for name, operator in tracked_operators.items():
+                if name in self.tracked_operators:
+                    raise ValueError(
+                        f"Tracked operator '{name}' is already registered."
+                    )
+                operator_dense = self._ensure_dense(operator)
+                if operator_dense.shape != hamiltonian.shape:
+                    raise ValueError(
+                        f"Tracked operator '{name}' has shape {operator_dense.shape},"
+                        f" expected {hamiltonian.shape}."
+                    )
+                operator_extended = np.kron(identity_prev, operator_dense)
+                transformed = evecs.conj().T @ operator_extended @ evecs
+                self.tracked_operators[name] = transformed.copy()
 
     def _build_total_hamiltonian_sequential(
         self,
@@ -218,6 +265,22 @@ class IterativeHamiltonianDiagonalizer:
                                   Each matrix is an independent copy, not a reference.
         """
         return {mode_idx: matrix.copy() for mode_idx, matrix in self._mode_basis_transformations.items()}
+
+    def get_tracked_operators(self) -> dict[str, np.ndarray]:
+        """
+        Return copies of all tracked operators in the final truncated eigenbasis.
+
+        Returns:
+            dict[str, np.ndarray]: Mapping from operator names to their matrices.
+        """
+        return {name: operator.copy() for name, operator in self.tracked_operators.items()}
+
+    @staticmethod
+    def _ensure_dense(operator: np.ndarray) -> np.ndarray:
+        """Convert sparse operators to dense arrays when necessary."""
+        if hasattr(operator, "toarray"):
+            return operator.toarray()
+        return np.asarray(operator)
 
 if __name__ == "__main__":
     # Example usage with sequential coupling (replace with your own operator constructors)
@@ -277,4 +340,3 @@ if __name__ == "__main__":
             print(f"  {name}: shape {op.shape}, max element {np.max(np.abs(op)):.6f}")
         else:
             print(f"  {name}: not yet available")
-
