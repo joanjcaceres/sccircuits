@@ -3,7 +3,7 @@ from typing import Optional, Sequence, Union
 
 # --- SciPy imports (dense & sparse) ---
 from scipy.sparse import diags
-from scipy.linalg import cosm
+from scipy.linalg import cosm, sinm
 from sccircuits.utilities import lanczos_krylov
 from sccircuits.iterative_diagonalizer import IterativeHamiltonianDiagonalizer
 
@@ -333,8 +333,6 @@ class Circuit:
                 # Current mode's coupling operator (couples to previous mode)
                 data = np.sqrt(np.arange(1, self.dimensions[idx + 1]))
                 linear_destroy_op_k = diags([data], [1], dtype=np.float64)
-                linear_annihilation_op_k = linear_destroy_op_k.T.conj()
-                                
                 # Coupling operator for next mode (if this is not the last mode)
                 if idx < remaining_bosonic_modes - 1:  # Not the last bosonic mode
                     coupling_operator_next = linear_destroy_op_k.T.copy()
@@ -347,7 +345,7 @@ class Circuit:
                     linear_destroy_op_k,      # Couples to previous mode
                     coupling_operator_next,   # Will couple to next mode (if any)
                     self.linear_coupling[idx], # Coupling strength
-                    tracked_operators={f"a_mode{idx + 1}": linear_annihilation_op_k},
+                    tracked_operators={f"a_mode{idx + 1}": linear_destroy_op_k},
                 )
 
         else:
@@ -379,8 +377,6 @@ class Circuit:
                 # Current mode's coupling operator (couples to previous mode)
                 data = np.sqrt(np.arange(1, self.dimensions[idx + 1]))
                 linear_destroy_op_k = diags([data], [1], dtype=np.float64)
-                linear_annihilation_op_k = linear_destroy_op_k.T.conj()
-                
                 # Coupling operator for next mode (if this is not the last mode)
                 if idx < remaining_bosonic_modes - 1:  # Not the last bosonic mode
                     coupling_operator_next = linear_destroy_op_k.T.copy()
@@ -393,7 +389,7 @@ class Circuit:
                     linear_destroy_op_k,      # Couples to previous mode
                     coupling_operator_next,   # Will couple to next mode (if any)
                     self.linear_coupling[idx], # Coupling strength
-                    tracked_operators={f"a_mode{idx + 1}": linear_annihilation_op_k},
+                    tracked_operators={f"a_mode{idx + 1}": linear_destroy_op_k},
                 )
 
         # Store the diagonalizer for access to basis transformations
@@ -447,6 +443,108 @@ class Circuit:
                 f"Operator '{name}' is not available. Available operators: {available}."
             )
         return operators[name]
+
+    def parameter_names(self) -> list[str]:
+        """Return the ordered list of physical parameters used by the circuit."""
+        names = ["non_linear_frequency", "non_linear_phase_zpf", "Ej"]
+        names.extend(
+            [f"linear_frequency_{idx}" for idx in range(len(self.linear_frequencies))]
+        )
+        names.extend(
+            [f"linear_coupling_{idx}" for idx in range(len(self.linear_coupling))]
+        )
+        return names
+
+    def parameter_vector(self) -> np.ndarray:
+        """Return the current parameter values following :meth:`parameter_names`."""
+        parts: list[np.ndarray] = [
+            np.array([self.non_linear_frequency], dtype=float),
+            np.array([self.non_linear_phase_zpf], dtype=float),
+            np.array([self.Ej], dtype=float),
+            np.array(self.linear_frequencies, dtype=float),
+            np.array(self.linear_coupling, dtype=float),
+        ]
+        if parts[3].size == 0:
+            parts[3] = np.array([], dtype=float)
+        if parts[4].size == 0:
+            parts[4] = np.array([], dtype=float)
+        return np.concatenate(parts)
+
+    def eigensystem_with_gradients(
+        self, truncation: int, phase_ext: Optional[float] = None
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
+        """Return eigenenergies, eigenvectors and Hellmann–Feynman gradients."""
+        energies, vectors = self.eigensystem(truncation=truncation, phase_ext=phase_ext)
+        gradient_matrix, names = self._energy_derivative_matrix(
+            phase_ext if phase_ext is not None else self.phase_ext
+        )
+        return energies, vectors, gradient_matrix, names
+
+    # ------------------------------------------------------------------
+    # Internal helpers for parameter derivatives
+    # ------------------------------------------------------------------
+    def _get_mode_annihilation(self, mode_index: int) -> np.ndarray:
+        """Fetch annihilation operator for a mode in the eigenbasis."""
+        name = f"a_mode{mode_index}"
+        op = self.get_annihilation_operator(name)
+        return op
+
+    def _energy_derivative_matrix(self, phase_ext: float) -> tuple[np.ndarray, list[str]]:
+        """Compute dE/dparam for all eigenstates via Hellmann–Feynman."""
+        if not hasattr(self, "_last_diagonalizer") or self._last_diagonalizer is None:
+            raise AttributeError("No eigensystem available. Call eigensystem() first.")
+
+        tracked_ops = self.get_tracked_operators()
+        num_states = self._last_diagonalizer.energies.shape[0]
+        identity = np.eye(num_states, dtype=np.complex128)
+
+        columns: list[np.ndarray] = []
+        names: list[str] = []
+
+        # Non-linear mode operators
+        a0 = tracked_ops["a_mode0"]
+        adag0 = a0.conj().T
+        number0 = adag0 @ a0
+
+        names.append("non_linear_frequency")
+        columns.append(np.real(np.diag(number0 + 0.5 * identity)))
+
+        phi_op = self.non_linear_phase_zpf * (a0 + adag0)
+        phi_shift = phi_op + phase_ext * identity
+        cos_phi = cosm(phi_shift)
+        sin_phi = sinm(phi_shift)
+        ann_sum = a0 + adag0
+
+        names.append("non_linear_phase_zpf")
+        dH_dphi = self.Ej * (sin_phi @ ann_sum)
+        columns.append(np.real(np.diag(dH_dphi)))
+
+        names.append("Ej")
+        columns.append(np.real(np.diag(-cos_phi)))
+
+        # Linear mode frequencies
+        for idx in range(len(self.linear_frequencies)):
+            mode = idx + 1
+            a_k = tracked_ops[f"a_mode{mode}"]
+            adag_k = a_k.conj().T
+            number_k = adag_k @ a_k
+            names.append(f"linear_frequency_{idx}")
+            columns.append(np.real(np.diag(number_k + 0.5 * identity)))
+
+        # Linear mode couplings
+        for idx in range(len(self.linear_coupling)):
+            a_prev = tracked_ops[f"a_mode{idx}"]
+            a_next = tracked_ops[f"a_mode{idx + 1}"]
+            adag_prev = a_prev.conj().T
+            adag_next = a_next.conj().T
+            coupling_op = a_prev @ adag_next + adag_prev @ a_next
+            names.append(f"linear_coupling_{idx}")
+            columns.append(np.real(np.diag(coupling_op)))
+
+        gradient_matrix = (
+            np.column_stack(columns) if columns else np.zeros((num_states, 0))
+        )
+        return gradient_matrix, names
 
     @property
     def collective_frequency(self) -> float:

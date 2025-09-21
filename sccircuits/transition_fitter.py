@@ -86,6 +86,9 @@ class TransitionFitter:
         model_func: Callable[[float, Sequence[float]], Union[np.ndarray, np.ndarray]],
         data: Dict[Transition, Sequence[Union[DataPoint, Tuple[float, float]]]],
         returns_eigenvalues: bool = False,
+        jacobian_func: Optional[
+            Callable[[float, Sequence[float]], np.ndarray]
+        ] = None,
     ) -> None:
         """Create a fitter instance.
 
@@ -101,9 +104,14 @@ class TransitionFitter:
             ``(phi_ext, value[, sigma])`` tuples.
         returns_eigenvalues : bool, default ``False``
             Flag describing the output of ``model_func``.
+        jacobian_func : callable, optional
+            Callable returning the eigenvalue Jacobian ``∂E/∂params`` when
+            invoked as ``jacobian_func(phi_ext, params)``. If provided, the
+            fitter supplies an analytic Jacobian to :func:`least_squares`.
         """
         self.model_func = model_func
         self.returns_eigenvalues = returns_eigenvalues
+        self.jacobian_func = jacobian_func
 
         # Normalize and sort transition keys so (i,j) and (j,i) are treated the same
         self.data: Dict[Transition, List[DataPoint]] = {}
@@ -125,6 +133,8 @@ class TransitionFitter:
         self._last_recorded_params: np.ndarray | None = None
         self._verbose: int = 0
         self._user_callback: Optional[Callable[[np.ndarray, np.ndarray], None]] = None
+        self._last_evals_cache: Optional[Dict[float, np.ndarray]] = None
+        self._last_jac_cache: Optional[Dict[float, np.ndarray]] = None
 
     @staticmethod
     def _transition_freq(evals: np.ndarray, i: int, j: int) -> float:
@@ -174,6 +184,7 @@ class TransitionFitter:
                 residual_list.append(diff)
 
         res = np.asarray(residual_list)
+        self._last_evals_cache = {k: v.copy() for k, v in evals_cache.items()}
         # Record unique parameter evaluations
         if self._last_recorded_params is None or not np.allclose(
             self._last_recorded_params, params
@@ -246,7 +257,9 @@ class TransitionFitter:
                     f" {initial}"
                 )
 
-        result = self._fit_least_squares(initial, bounds, verbose, **kwargs)
+        jac_callable = self.jacobian if self.jacobian_func is not None else None
+
+        result = self._fit_least_squares(initial, bounds, verbose, jac_callable, **kwargs)
         self.result = result
         return result
 
@@ -255,12 +268,46 @@ class TransitionFitter:
         initial: np.ndarray,
         bounds: Optional[Tuple[Sequence[float], Sequence[float]]],
         verbose: int,
+        jac_callable: Optional[Callable[[np.ndarray], np.ndarray]],
         **ls_kwargs,
     ):
         """Internal helper wrapping :func:`scipy.optimize.least_squares`."""
         if bounds is not None:
             ls_kwargs["bounds"] = bounds
+        if jac_callable is not None:
+            ls_kwargs["jac"] = jac_callable
         return least_squares(self.residuals, initial, verbose=verbose, **ls_kwargs)
+
+    def _evaluate_eigen_derivatives(
+        self, phi_ext: float, params: np.ndarray
+    ) -> np.ndarray:
+        if self.jacobian_func is None:
+            raise RuntimeError("No jacobian function was supplied.")
+        derivatives = self.jacobian_func(phi_ext, params)
+        derivatives = np.asarray(derivatives, dtype=float)
+        return derivatives
+
+    def jacobian(self, params: np.ndarray) -> np.ndarray:
+        """Assemble the residual Jacobian for least-squares solvers."""
+        if self.jacobian_func is None:
+            raise RuntimeError("Jacobian requested but no jacobian_func provided.")
+
+        jac_rows: List[np.ndarray] = []
+        deriv_cache: Dict[float, np.ndarray] = {}
+
+        for transition, data_points in self.data.items():
+            i, j = transition
+            for data_point in data_points:
+                phi = data_point.phi_ext
+                if phi not in deriv_cache:
+                    deriv_cache[phi] = self._evaluate_eigen_derivatives(phi, params)
+                derivs = deriv_cache[phi]
+                row = derivs[j] - derivs[i]
+                if data_point.sigma is not None:
+                    row = row / data_point.sigma
+                jac_rows.append(row)
+
+        return np.vstack(jac_rows)
 
     # differential-evolution-based helpers have been removed for simplicity.
 
