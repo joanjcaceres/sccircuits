@@ -13,40 +13,62 @@ class TestCircuit:
     
     def test_circuit_initialization(self):
         """Test basic circuit initialization."""
-        frequencies = [5.0, 6.0]
-        phase_zpf = [0.1, 0.2]
-        dimensions = [50, 10]
+        non_linear_frequency = 5.0
+        non_linear_phase_zpf = 0.1
         Ej = 1.0
+        linear_couplings = [1, 2]
+        linear_frequencies = [5.0, 6.0]
+        dimensions = [50, 10, 5]
         
         circuit = Circuit(
-            frequencies=frequencies,
-            phase_zpf=phase_zpf,
+            non_linear_frequency=non_linear_frequency,
+            non_linear_phase_zpf=non_linear_phase_zpf,
+            Ej=Ej,
+            linear_couplings=linear_couplings,
+            linear_frequencies=linear_frequencies,
             dimensions=dimensions,
-            Ej=Ej
         )
         
-        assert circuit.modes == 2
+        assert circuit.modes == 3
         assert circuit.Ej == Ej
-        assert np.allclose(circuit.frequencies, frequencies)
-        assert np.allclose(circuit.phase_zpf, phase_zpf)
-    
+        assert np.allclose(circuit.linear_frequencies, linear_frequencies)
+        assert np.allclose(circuit.non_linear_phase_zpf, non_linear_phase_zpf)
+
     def test_invalid_inputs(self):
         """Test that invalid inputs raise appropriate errors."""
         # Mismatched lengths
-        with pytest.raises(ValueError, match="must have the same length"):
-            Circuit([5.0], [0.1, 0.2], [50], 1.0)
+        with pytest.raises(ValueError, match="must each have length len\\(dimensions\\) - 1"):
+            Circuit(
+                non_linear_frequency=5.0,
+                non_linear_phase_zpf=0.1,
+                dimensions=[50, 10],
+                linear_frequencies=[5.0, 6.0],
+                linear_couplings=[1],
+                Ej=1.0,
+            )
         
         # Negative frequency
         with pytest.raises(ValueError, match="must be positive"):
-            Circuit([-1.0], [0.1], [50], 1.0)
+            Circuit(
+                non_linear_frequency=-5.0,
+                non_linear_phase_zpf=0.1,
+                dimensions=[50],
+                Ej=1.0,
+            )
         
         # Negative phase_zpf  
         with pytest.raises(ValueError, match="must be positive"):
-            Circuit([5.0], [-0.1], [50], 1.0)
+            Circuit(
+                non_linear_frequency=5.0,
+                non_linear_phase_zpf=-0.1,
+                dimensions=[50],
+                Ej=1.0,
+            )
         # Negative phase_zpf
     def test_hamiltonian_construction(self):
         """Test Hamiltonian matrix construction."""
-        circuit = Circuit([5.0], [0.1], [10], 1.0)
+        circuit = Circuit(
+            non_linear_frequency=5.0, non_linear_phase_zpf=0.1, dimensions=[10], Ej=1.0)
         H = circuit.hamiltonian_nl()
         
         # Check that Hamiltonian is square matrix
@@ -65,7 +87,9 @@ class TestCircuit:
     
     def test_eigensystem_calculation(self):
         """Test eigensystem calculation."""
-        circuit = Circuit([5.0], [0.1], [20], 1.0)
+        circuit = Circuit(
+            non_linear_frequency=5.0, non_linear_phase_zpf=0.1, dimensions=[20], Ej=1.0
+        )
         evals, evecs = circuit.eigensystem(truncation=10)
         
         # Check output shapes
