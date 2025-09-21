@@ -64,9 +64,7 @@ class CircuitFitter:
         self.transition_fitter = TransitionFitter(
             model_func=self.eigenvalues_function,
             data=transitions,
-            params_initial=self.params_initial,
             returns_eigenvalues=True,
-            optimizer=optimizer,
         )
 
         self.bounds = self._bounds()
@@ -115,7 +113,9 @@ class CircuitFitter:
         return np.array([lower_bounds, upper_bounds])
 
     def fit(self, verbose=1):  # Adapt for DE.
-        return self.transition_fitter.fit(bounds=self.bounds, verbose=verbose)
+        return self.transition_fitter.fit(
+            params_initial=self.params_initial, bounds=self.bounds, verbose=verbose
+        )
 
     def eigenvalues_function(self, phase_ext, params):
         phase_ext *= self.x_scale
