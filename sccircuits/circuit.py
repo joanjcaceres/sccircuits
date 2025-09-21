@@ -82,7 +82,8 @@ class Circuit:
     
     This class implements a comprehensive framework for analyzing superconducting
     quantum circuits, including support for multi-mode systems,
-    and eigensystem calculations with truncation.
+    and eigensystem calculations with truncation. The nonlinear Josephson
+    potential can optionally include a second harmonic term -EJ2 cos(2*phi).
     
     The Circuit class can handle both single and multi-mode superconducting 
     circuits with arbitrary coupling between modes. It supports both dense and
@@ -97,6 +98,7 @@ class Circuit:
         linear_couplings: Optional[Sequence[float]],
         dimensions: Sequence[int],
         Ej: float,
+        Ej_second: float = 0.0,
         Gamma: Optional[float] = None,
         epsilon_r: Optional[float] = None,
         phase_ext: float = 0.0,
@@ -120,6 +122,9 @@ class Circuit:
             Hilbert-space dimensions for each mode.
         Ej : float
             Josephson energy in GHz.
+        Ej_second : float, optional
+            Amplitude of the second harmonic Josephson term in GHz. Defaults to 0
+            to recover the standard single cosine potential.
         Gamma : Optional[float], optional
             Fermionic coupling strength in GHz. Provide together with epsilon_r.
         epsilon_r : Optional[float], optional
@@ -174,6 +179,7 @@ class Circuit:
         self.linear_coupling = linear_couplings_array
 
         self.Ej = Ej
+        self.Ej_second = float(Ej_second)
         self.Gamma = Gamma
         self.epsilon_r = epsilon_r
         self.phase_ext = phase_ext
@@ -194,6 +200,7 @@ class Circuit:
         phase_zpf: Sequence[float],
         dimensions: Sequence[int],
         Ej: float,
+        Ej_second: float = 0.0,
         Gamma: Optional[float] = None,
         epsilon_r: Optional[float] = None,
         phase_ext: float = 0.0,
@@ -213,6 +220,7 @@ class Circuit:
             linear_couplings=params["linear_couplings"],
             dimensions=dimensions,
             Ej=Ej,
+            Ej_second=Ej_second,
             Gamma=Gamma,
             epsilon_r=epsilon_r,
             phase_ext=phase_ext,
@@ -249,9 +257,15 @@ class Circuit:
         data = np.sqrt(np.arange(1, dimension_bosonic))
         phi_op = phi_zpf_0 * diags([data, data], [1, -1]).toarray()
         
-        # Calculate the full cosine operator for the hamiltonian
-        cos_full_op = cosm(phi_op + phase_ext * np.eye(dimension_bosonic))
-        hamiltonian -= self.Ej * cos_full_op
+        # Calculate the nonlinear potential contributions. Keep phi_shift handy because
+        # it is reused by multiple harmonic terms when present.
+        phi_shift = phi_op + phase_ext * np.eye(dimension_bosonic)
+        cos_phi = cosm(phi_shift)
+        hamiltonian -= self.Ej * cos_phi
+
+        if self.Ej_second != 0.0:
+            cos_2phi = cosm(2.0 * phi_shift)
+            hamiltonian -= self.Ej_second * cos_2phi
 
         if return_coupling_ops:
             if self.has_fermionic_coupling:
@@ -446,7 +460,7 @@ class Circuit:
 
     def parameter_names(self) -> list[str]:
         """Return the ordered list of physical parameters used by the circuit."""
-        names = ["non_linear_frequency", "non_linear_phase_zpf", "Ej"]
+        names = ["non_linear_frequency", "non_linear_phase_zpf", "Ej", "Ej_second"]
         names.extend(
             [f"linear_frequency_{idx}" for idx in range(len(self.linear_frequencies))]
         )
@@ -461,13 +475,13 @@ class Circuit:
             np.array([self.non_linear_frequency], dtype=float),
             np.array([self.non_linear_phase_zpf], dtype=float),
             np.array([self.Ej], dtype=float),
+            np.array([self.Ej_second], dtype=float),
             np.array(self.linear_frequencies, dtype=float),
             np.array(self.linear_coupling, dtype=float),
         ]
-        if parts[3].size == 0:
-            parts[3] = np.array([], dtype=float)
-        if parts[4].size == 0:
-            parts[4] = np.array([], dtype=float)
+        for idx in range(4, 6):
+            if parts[idx].size == 0:
+                parts[idx] = np.array([], dtype=float)
         return np.concatenate(parts)
 
     def eigensystem_with_gradients(
@@ -513,14 +527,20 @@ class Circuit:
         phi_shift = phi_op + phase_ext * identity
         cos_phi = cosm(phi_shift)
         sin_phi = sinm(phi_shift)
+        cos_2phi = cosm(2.0 * phi_shift)
+        sin_2phi = sinm(2.0 * phi_shift)
         ann_sum = a0 + adag0
 
         names.append("non_linear_phase_zpf")
         dH_dphi = self.Ej * (sin_phi @ ann_sum)
+        dH_dphi += 2.0 * self.Ej_second * (sin_2phi @ ann_sum)
         columns.append(np.real(np.diag(dH_dphi)))
 
         names.append("Ej")
         columns.append(np.real(np.diag(-cos_phi)))
+
+        names.append("Ej_second")
+        columns.append(np.real(np.diag(-cos_2phi)))
 
         # Linear mode frequencies
         for idx in range(len(self.linear_frequencies)):
