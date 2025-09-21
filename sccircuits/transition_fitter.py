@@ -1,14 +1,29 @@
-"""
-transition_fitter.py
+"""Tools for fitting transition frequencies versus an external control.
 
-TransitionFitter class to fit experimental transition data (i -> j) dependent on an external parameter (phi_ext).
+The :class:`TransitionFitter` orchestrates nonlinear regression of multiple
+spectroscopic transitions simultaneously.  End users provide a *model function*
+that predicts eigenvalues (or a Hamiltonian to be diagonalised internally), a
+dictionary of experimental transition data, and an initial guess for the model
+parameters.  The fitter takes care of normalising transitions, caching repeated
+diagonalisations, running the chosen optimiser, and producing extensive
+diagnostic statistics.
 
-Basic usage:
-    1. Define a function model_func(phi_ext, params) returning the system's Hermitian matrix (default) or directly eigenvalues if returns_eigenvalues=True.
-    2. Prepare a `data` dictionary with keys (i, j) and lists of (phi_ext, experimental value) pairs.
-    3. Instantiate TransitionFitter and call .fit().
+Typical workflow::
 
-Dependencies: numpy, scipy ≥1.10
+    >>> def model(phi_ext, params):
+    ...     # return eigenvalues for the system at external flux phi_ext
+    ...     return np.array([...])
+    >>> data = {
+    ...     (0, 1): [(0.0, 5.1), (0.5, 5.3)],
+    ...     (1, 2): [(0.0, 4.9), (0.5, 4.7)],
+    ... }
+    >>> fitter = TransitionFitter(model_func=model, data=data,
+    ...                           params_initial=[5.0, 0.1],
+    ...                           returns_eigenvalues=True)
+    >>> result = fitter.fit(verbose=1)
+    >>> stats = fitter.get_fit_statistics()
+
+This module depends on :mod:`numpy` and :mod:`scipy` (≥1.10).
 """
 
 from dataclasses import dataclass
@@ -25,7 +40,18 @@ Transition = Tuple[int, int]  # (i, j) with j > i
 
 @dataclass
 class DataPoint:
-    """Holds a single experimental data point (phi_ext, value, optional sigma)."""
+    """Single experimental measurement used by :class:`TransitionFitter`.
+
+    Parameters
+    ----------
+    phi_ext : float
+        External control value (for example, reduced flux in units of ``Φ₀``).
+    value : float
+        Measured transition frequency/energy corresponding to ``phi_ext``.
+    sigma : float, optional
+        One-sigma uncertainty for ``value``.  When left ``None`` the fitter
+        falls back to :attr:`TransitionFitter.DEFAULT_SIGMA`.
+    """
 
     phi_ext: float
     value: float  # experimental frequency or energy
@@ -41,9 +67,18 @@ class DataPoint:
 
 
 class TransitionFitter:
-    """Fits multiple transitions simultaneously with per-point uncertainties.
-    Transitions (i, j) and (j, i) are treated equivalently by normalizing keys.
-    Supports multiple optimization methods: least_squares, differential_evolution, or custom optimizers.
+    """Nonlinear fitter for multi-transition spectroscopy datasets.
+
+    Features
+    --------
+    * simultaneous fitting of several transitions with optional per-point
+      uncertainties;
+    * automatic normalisation of transition indices so ``(i, j)`` and ``(j, i)``
+      refer to the same dataset;
+    * caching of Hamiltonian diagonalisations per external parameter value;
+    * choice between SciPy's :func:`least_squares`,
+      :func:`differential_evolution`, or a user supplied optimiser;
+    * rich post-fit diagnostics (statistics, residual analysis, history).
     """
 
     DEFAULT_SIGMA = 1.0
@@ -56,6 +91,27 @@ class TransitionFitter:
         returns_eigenvalues: bool = False,
         optimizer: str = "least_squares",
     ) -> None:
+        """Create a fitter instance.
+
+        Parameters
+        ----------
+        model_func : callable
+            Callable receiving ``(phi_ext, params)`` and returning either a
+            Hermitian matrix (when ``returns_eigenvalues=False``) or the array of
+            eigenvalues at that operating point (when ``True``).
+        data : dict[(int, int), sequence]
+            Experimental observations.  Keys specify the transition ``(i, j)``;
+            values contain either :class:`DataPoint` instances or
+            ``(phi_ext, value[, sigma])`` tuples.
+        params_initial : sequence of float, optional
+            Starting guess for the optimisation.  If omitted, the fitter
+            infers an initial guess from the midpoint of the provided bounds at
+            run time.
+        returns_eigenvalues : bool, default ``False``
+            Flag describing the output of ``model_func``.
+        optimizer : {"least_squares", "differential_evolution", "custom"}, optional
+            Optimisation backend to use by default.
+        """
         self.model_func = model_func
         self.optimizer = optimizer
         if params_initial is None:
@@ -95,13 +151,13 @@ class TransitionFitter:
 
     @staticmethod
     def _transition_freq(evals: np.ndarray, i: int, j: int) -> float:
-        """Compute |Ej - Ei| assuming eigenvalues are sorted."""
+        """Return the absolute difference ``|E_j - E_i|`` for sorted eigenvalues."""
         return abs(evals[j] - evals[i])
 
     def _theory(
         self, phi_ext: float, params: np.ndarray, transition: Transition
     ) -> float:
-        """Compute theoretical transition for given phi_ext and parameters."""
+        """Compute a single theoretical transition value for ``phi_ext``."""
         if self.returns_eigenvalues:
             evals = self.model_func(phi_ext, params)
         else:
@@ -111,10 +167,11 @@ class TransitionFitter:
         return self._transition_freq(evals, i, j)
 
     def residuals(self, params: np.ndarray) -> np.ndarray:
-        """Weighted residuals vector for least-squares minimization.
+        """Return the weighted residual vector used by least-squares solvers.
 
-        Uses a cache so the Hamiltonian diagonalisation for a given phi_ext
-        is executed only once per residual evaluation.
+        The routine caches eigenvalues for each unique ``phi_ext`` encountered
+        during the residual evaluation so that costly diagonalisations are not
+        repeated.
         """
         residual_list: List[float] = []
         evals_cache: Dict[float, np.ndarray] = {}  # phi_ext -> eigenvalues
@@ -230,7 +287,7 @@ class TransitionFitter:
         return self.result
 
     def _fit_least_squares(self, bounds, verbose, **ls_kwargs):
-        """Internal method for least squares fitting."""
+        """Internal helper wrapping :func:`scipy.optimize.least_squares`."""
         if bounds is not None:
             ls_kwargs["bounds"] = bounds
         return least_squares(
@@ -238,7 +295,7 @@ class TransitionFitter:
         )
 
     def _fit_differential_evolution(self, bounds, verbose, **de_kwargs):
-        """Internal method for differential evolution fitting."""
+        """Internal helper coordinating DE + least-squares refinement."""
         lower, upper = bounds
         if len(lower) != len(upper):
             raise ValueError("Lower and upper bounds must have the same length.")
@@ -293,7 +350,7 @@ class TransitionFitter:
         return ls_result
 
     def _fit_custom(self, bounds, verbose, **kwargs):
-        """Internal method for custom optimizer fitting."""
+        """Invoke a user supplied optimiser with the standard objective."""
         optimizer_func = kwargs.pop("optimizer_func")
 
         # The custom optimizer should accept:
