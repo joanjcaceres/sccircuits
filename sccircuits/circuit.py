@@ -7,13 +7,82 @@ from scipy.linalg import cosm
 from sccircuits.utilities import lanczos_krylov
 from sccircuits.iterative_diagonalizer import IterativeHamiltonianDiagonalizer
 
+def harmonic_modes_to_physical(
+    frequencies: Union[np.ndarray, Sequence[float]],
+    phase_zpf: Union[np.ndarray, Sequence[float]],
+) -> dict[str, Union[float, np.ndarray, dict]]:
+    """Map harmonic mode data to physical parameters via Lanczos tridiagonalization."""
+    frequencies = np.asarray(frequencies, dtype=float)
+    phase_zpf = np.asarray(phase_zpf, dtype=float)
+
+    if frequencies.ndim != 1 or phase_zpf.ndim != 1:
+        raise ValueError("frequencies and phase_zpf must be one-dimensional sequences.")
+    if frequencies.size != phase_zpf.size:
+        raise ValueError(
+            "frequencies and phase_zpf must have the same length for Lanczos transformation."
+        )
+    if frequencies.size == 0:
+        raise ValueError("At least one mode is required for Lanczos transformation.")
+    if np.any(frequencies <= 0):
+        raise ValueError("All input frequencies must be positive for Lanczos transformation.")
+
+    phi_norm = np.linalg.norm(phase_zpf)
+    if phi_norm <= 0:
+        raise ValueError("phase_zpf must contain at least one non-zero element.")
+
+    normalized_phase_zpf = phase_zpf / phi_norm
+    harmonic_hamiltonian = np.diag(frequencies)
+    collective_frequency = normalized_phase_zpf @ harmonic_hamiltonian @ normalized_phase_zpf
+
+    Q, T, alpha, beta, status = lanczos_krylov(H=harmonic_hamiltonian, v=phase_zpf)
+
+    return {
+        "non_linear_frequency": float(alpha[0]),
+        "non_linear_phase_zpf": float(phi_norm),
+        "linear_frequencies": alpha[1:],
+        "linear_couplings": beta,
+        "collective_frequency": float(collective_frequency),
+        "basis": Q,
+        "tridiagonal": T,
+        "status": status,
+    }
+
+
+def bogoliubov_transform(
+    Ej: float,
+    non_linear_phase_zpf: float,
+    mode_frequency: float,
+) -> dict[str, float]:
+    """Compute Bogoliubov squeezing parameters for the nonlinear mode."""
+    if mode_frequency <= 0:
+        raise ValueError("mode_frequency must be positive for the Bogoliubov transform.")
+    if non_linear_phase_zpf <= 0:
+        raise ValueError("non_linear_phase_zpf must be positive for the Bogoliubov transform.")
+
+    mu = 2 * Ej * non_linear_phase_zpf**2 / mode_frequency
+    if mu >= 1:
+        Ej_max = mode_frequency / (2 * non_linear_phase_zpf**2)
+        raise ValueError(
+            f"EJ = {Ej:.3f} GHz exceeds the stability limit of {Ej_max:.3f} GHz "
+            "(requires 2*Ej*phi_zpf_rms^2 < mode_frequency)."
+        )
+
+    r = -0.25 * np.log(1 - mu)
+    return {
+        "r": r,
+        "sinh_r": np.sinh(r),
+        "cosh_r": np.cosh(r),
+        "mu": mu,
+    }
+
+
 class Circuit:
     """
     Main class for superconducting quantum circuit analysis.
     
     This class implements a comprehensive framework for analyzing superconducting
-    quantum circuits, including support for multi-mode systems, Bogoliubov 
-    transformations, and eigensystem calculations with truncation.
+    quantum circuits, including support for multi-mode systems,
+    and eigensystem calculations with truncation.
     
     The Circuit class can handle both single and multi-mode superconducting 
     circuits with arbitrary coupling between modes. It supports both dense and
@@ -22,7 +91,6 @@ class Circuit:
     
     def __init__(
         self,
-        *,
         non_linear_frequency: float,
         non_linear_phase_zpf: float,
         linear_frequencies: Optional[Sequence[float]],
@@ -32,7 +100,6 @@ class Circuit:
         Gamma: Optional[float] = None,
         epsilon_r: Optional[float] = None,
         phase_ext: float = 0.0,
-        collective_frequency: Optional[float] = None,
     ):
         """
         Initializes a Circuit object for superconducting circuit analysis.
@@ -59,10 +126,6 @@ class Circuit:
             Fermionic energy level spacing in GHz. Provide together with Gamma.
         phase_ext : float, optional
             External flux phase in radians, default is 0.
-        use_bogoliubov : bool, optional
-            If True, applies Bogoliubov transformation to the collective mode.
-            If False, uses original parameters without transformation. Default is False.
-            
         Raises
         ------
         ValueError
@@ -119,39 +182,47 @@ class Circuit:
         if (Gamma is None and epsilon_r is not None) or (Gamma is not None and epsilon_r is None):
             raise ValueError("Both Gamma and epsilon_r must be provided together for fermionic coupling, or both should be None.")
 
-        self.non_linear_phase_zpf = np.linalg.norm(self.phase_zpf)
-        normalized_phase_zpf = self.phase_zpf / self.non_linear_phase_zpf
+        self._lanczos_basis: Optional[np.ndarray] = None
+        self._lanczos_tridiagonal: Optional[np.ndarray] = None
+        self._lanczos_status: Optional[dict] = None
 
-        harmonic_hamiltonian = np.diag(self.frequencies)
-        self.collective_frequency = (
-            normalized_phase_zpf @ harmonic_hamiltonian @ normalized_phase_zpf
+    @classmethod
+    def from_harmonic_modes(
+        cls,
+        *,
+        frequencies: Sequence[float],
+        phase_zpf: Sequence[float],
+        dimensions: Sequence[int],
+        Ej: float,
+        Gamma: Optional[float] = None,
+        epsilon_r: Optional[float] = None,
+        phase_ext: float = 0.0,
+    ) -> "Circuit":
+        """
+        Construct a Circuit by first converting harmonic inputs with Lanczos.
+        """
+        if len(frequencies) != len(dimensions) or len(phase_zpf) != len(dimensions):
+            raise ValueError("frequencies, phase_zpf, and dimensions must share the same length.")
+
+        params = harmonic_modes_to_physical(frequencies, phase_zpf)
+
+        circuit = cls(
+            non_linear_frequency=params["non_linear_frequency"],
+            non_linear_phase_zpf=params["non_linear_phase_zpf"],
+            linear_frequencies=params["linear_frequencies"],
+            linear_couplings=params["linear_couplings"],
+            dimensions=dimensions,
+            Ej=Ej,
+            Gamma=Gamma,
+            epsilon_r=epsilon_r,
+            phase_ext=phase_ext,
         )
-        if use_bogoliubov:
-            harmonic_hamiltonian[0, 0] = self.collective_frequency
-            # Check stability condition: 2*Ej*phi_zpf_rms^2 < collective_frequency
-            mu = 2 * self.Ej * self.non_linear_phase_zpf**2 / self.collective_frequency
-            if mu >= 1:
-                Ej_max = self.collective_frequency / (2 * self.non_linear_phase_zpf**2)
-                raise ValueError(
-                    f"EJ = {self.Ej:.3f} GHz exceeds the stability limit of {Ej_max:.3f} GHz "
-                    "(requires 2*Ej*phi_zpf_rms^2 < collective_frequency)."
-                )
 
-        Q, self.T, alpha, beta, _ = lanczos_krylov(
-            H=harmonic_hamiltonian, v=self.phase_zpf
-        )
-        self.non_linear_frequency = alpha[0]
-        self.linear_frequencies = alpha[1:]
-        self.linear_coupling = beta
+        circuit._lanczos_basis = params["basis"]
+        circuit._lanczos_tridiagonal = params["tridiagonal"]
+        circuit._lanczos_status = params["status"]
 
-        self.Ec = self.collective_frequency * self.non_linear_phase_zpf**2 / 4
-        self.El = self.collective_frequency / 2 / self.non_linear_phase_zpf**2
-
-        # self.linear_frequencies, self.linear_coupling = self._non_collective_eigsystem()
-
-        # if self.use_bogoliubov:
-        #     self.non_linear_frequency = self._non_linear_frequency()
-        #     self.non_linear_phase_zpf = self._non_linear_phase_zpf()
+        return circuit
 
     def hamiltonian_nl(self, phase_ext: Optional[float] = None, return_coupling_ops: bool = False):
         """
@@ -186,24 +257,13 @@ class Circuit:
             if self.has_fermionic_coupling:
                 cos_half_op = cosm(phi_op / 2)
             else:
-                cos_half_op = None  # Not needed for purely bosonic systems
-            
-            # Calculate collective creation operator here to avoid duplication
-            if self.use_bogoliubov:
-                r = self.r_bogoliubov()
-                # Cache sinh(r) and cosh(r) for efficiency
-                if not hasattr(self, "_sinh_r") or not hasattr(self, "_cosh_r"):
-                    self._sinh_r = np.sinh(r)
-                    self._cosh_r = np.cosh(r)
-                collective_creation_operator = diags(
-                    [self._sinh_r * data, self._cosh_r * data], [1, -1], dtype=np.float64
-                )
-            else:
-                collective_creation_operator = diags([data], [-1], dtype=np.float64)
-            
+                cos_half_op = None
+
+            collective_creation_operator = diags([data], [-1], dtype=np.float64)
+
             return hamiltonian, cos_half_op, collective_creation_operator
-        else:
-            return hamiltonian
+
+        return hamiltonian
 
     def _fermionic_hamiltonian(self) -> np.ndarray:
         """
@@ -341,24 +401,6 @@ class Circuit:
         
         return iterator.energies, iterator.basis_vectors
 
-    def r_bogoliubov(self) -> float:
-        """
-        Calculate the Bogoliubov transformation parameter r.
-        
-        Returns:
-            float: The Bogoliubov parameter r
-        """
-        # Calculate the collective frequency from the transformed frequencies
-        collective_frequency = self.non_linear_frequency  
-        phi_zpf_rms = self.non_linear_phase_zpf
-        
-        r = (
-            -1
-            / 4
-            * np.log(1 - 2 * self.Ej * phi_zpf_rms**2 / collective_frequency)
-        )
-        return r
-    
     def get_basis_transformations(self) -> dict[int, np.ndarray]:
         """
         Get all basis transformation matrices from the last eigensystem calculation.
@@ -406,6 +448,21 @@ class Circuit:
             )
         return operators[name]
 
+    @property
+    def collective_frequency(self) -> float:
+        """Return the collective mode frequency (currently equal to the nonlinear frequency)."""
+        return self.non_linear_frequency
+
+    @property
+    def Ec(self) -> float:
+        """Compute the charging energy in GHz for convenience."""
+        return self.collective_frequency * self.non_linear_phase_zpf**2 / 4
+
+    @property
+    def El(self) -> float:
+        """Compute the inductive energy in GHz for convenience."""
+        return self.collective_frequency / (2 * self.non_linear_phase_zpf**2)
+
     # def _non_collective_eigsystem(self) -> np.ndarray:
     #     """
     #     Calculate the eigenvalues and eigenvectors of the non-collective system.
@@ -441,36 +498,39 @@ class Circuit:
     #     return non_linear_phase_zpf
     
 if __name__ == "__main__":
-    # Example usage of the Circuit class
-    frequencies = np.array([5.0, 6.0, 7.8])
-    phase_zpf = np.array([0.1, 0.2, 0.01])
+    frequencies = [5.0, 6.0, 7.8]
+    phase_zpf = [0.1, 0.2, 0.01]
     dimensions = [50, 10, 3]
     Ej = 1.0
-    phase_ext = 0.0
 
-    # Test basic functionality
-    circuit = Circuit(
-        frequencies, phase_zpf, dimensions, Ej, 
-        phase_ext=phase_ext, use_bogoliubov=True
+    circuit = Circuit.from_harmonic_modes(
+        frequencies=frequencies,
+        phase_zpf=phase_zpf,
+        dimensions=dimensions,
+        Ej=Ej,
+        phase_ext=0.0,
     )
+
     print("Basic Circuit:")
     print(f"Non-linear frequency: {circuit.non_linear_frequency:.3f} GHz")
     print(f"Non-linear phase ZPF: {circuit.non_linear_phase_zpf:.3f}")
 
-    # Test with fermionic coupling - NEW FEATURE
-    circuit_with_fermion = Circuit(
-        frequencies, phase_zpf, dimensions, Ej, 
-        Gamma=0.5, epsilon_r=0.2,  # These enable fermionic coupling
-        phase_ext=phase_ext, use_bogoliubov=True
+    circuit_with_fermion = Circuit.from_harmonic_modes(
+        frequencies=frequencies,
+        phase_zpf=phase_zpf,
+        dimensions=dimensions,
+        Ej=Ej,
+        Gamma=0.5,
+        epsilon_r=0.2,
+        phase_ext=0.0,
     )
+
     print("\nCircuit with fermionic coupling:")
     print(f"Gamma (fermion-boson coupling): {circuit_with_fermion.Gamma} GHz")
     print(f"epsilon_r (fermion energy): {circuit_with_fermion.epsilon_r} GHz")
-    
-    # Compare eigenspectra
+
     energies_basic, _ = circuit.eigensystem(truncation=10)
     energies_with_fermion, _ = circuit_with_fermion.eigensystem(truncation=10)
-    
+
     print(f"\nLowest 5 energies (basic): {energies_basic[:5]}")
     print(f"Lowest 5 energies (with fermion): {energies_with_fermion[:5]}")
-    print("\n✅ Implementation successful!")
