@@ -18,9 +18,8 @@ Typical workflow::
     ...     (1, 2): [(0.0, 4.9), (0.5, 4.7)],
     ... }
     >>> fitter = TransitionFitter(model_func=model, data=data,
-    ...                           params_initial=[5.0, 0.1],
     ...                           returns_eigenvalues=True)
-    >>> result = fitter.fit(verbose=1)
+    >>> result = fitter.fit(params_initial=[5.0, 0.1], verbose=1)
     >>> stats = fitter.get_fit_statistics()
 
 This module depends on :mod:`numpy` and :mod:`scipy` (≥1.10).
@@ -33,7 +32,7 @@ import numpy as np
 from IPython.display import clear_output
 from scipy import stats
 from scipy.linalg import eigh
-from scipy.optimize import differential_evolution, least_squares
+from scipy.optimize import least_squares
 
 Transition = Tuple[int, int]  # (i, j) with j > i
 
@@ -76,8 +75,7 @@ class TransitionFitter:
     * automatic normalisation of transition indices so ``(i, j)`` and ``(j, i)``
       refer to the same dataset;
     * caching of Hamiltonian diagonalisations per external parameter value;
-    * choice between SciPy's :func:`least_squares`,
-      :func:`differential_evolution`, or a user supplied optimiser;
+    * streamlined integration with SciPy's :func:`least_squares` optimiser;
     * rich post-fit diagnostics (statistics, residual analysis, history).
     """
 
@@ -87,9 +85,7 @@ class TransitionFitter:
         self,
         model_func: Callable[[float, Sequence[float]], Union[np.ndarray, np.ndarray]],
         data: Dict[Transition, Sequence[Union[DataPoint, Tuple[float, float]]]],
-        params_initial: Optional[Sequence[float]] = None,
         returns_eigenvalues: bool = False,
-        optimizer: str = "least_squares",
     ) -> None:
         """Create a fitter instance.
 
@@ -103,29 +99,11 @@ class TransitionFitter:
             Experimental observations.  Keys specify the transition ``(i, j)``;
             values contain either :class:`DataPoint` instances or
             ``(phi_ext, value[, sigma])`` tuples.
-        params_initial : sequence of float, optional
-            Starting guess for the optimisation.  If omitted, the fitter
-            infers an initial guess from the midpoint of the provided bounds at
-            run time.
         returns_eigenvalues : bool, default ``False``
             Flag describing the output of ``model_func``.
-        optimizer : {"least_squares", "differential_evolution", "custom"}, optional
-            Optimisation backend to use by default.
         """
         self.model_func = model_func
-        self.optimizer = optimizer
-        if params_initial is None:
-            self.params_initial = None
-        else:
-            self.params_initial = np.asarray(params_initial, dtype=float)
         self.returns_eigenvalues = returns_eigenvalues
-
-        # Validate optimizer
-        valid_optimizers = ["least_squares", "differential_evolution", "custom"]
-        if optimizer not in valid_optimizers:
-            raise ValueError(
-                f"optimizer must be one of {valid_optimizers}, got '{optimizer}'"
-            )
 
         # Normalize and sort transition keys so (i,j) and (j,i) are treated the same
         self.data: Dict[Transition, List[DataPoint]] = {}
@@ -144,7 +122,6 @@ class TransitionFitter:
 
         # History of (params, residuals) recorded each iteration
         self.history: List[Tuple[np.ndarray, np.ndarray]] = []
-        self.de_history = []  # For differential evolution specific history
         self._last_recorded_params: np.ndarray | None = None
         self._verbose: int = 0
         self._user_callback: Optional[Callable[[np.ndarray, np.ndarray], None]] = None
@@ -215,196 +192,77 @@ class TransitionFitter:
 
     def fit(
         self,
+        params_initial: Optional[Sequence[float]] = None,
+        *,
         bounds: Optional[Tuple[Sequence[float], Sequence[float]]] = None,
         verbose: int = 0,
         callback: Optional[Callable[[np.ndarray, np.ndarray], None]] = None,
-        optimizer: Optional[str] = None,
         **kwargs,
     ):
-        """Perform nonlinear fitting using the specified optimization method.
+        """Perform a nonlinear least-squares fit for the supplied data.
 
         Parameters
         ----------
+        params_initial : sequence of float, optional
+            Starting point passed to :func:`scipy.optimize.least_squares`.  When
+            omitted, the midpoint of ``bounds`` is used.
         bounds : tuple, optional
-            Tuple (lower_bounds, upper_bounds) for parameter bounds.
+            Tuple ``(lower_bounds, upper_bounds)`` forwarded to
+            :func:`least_squares`.
         verbose : int, default 0
             Verbosity level (0, 1, 2).
         callback : callable, optional
-            Function called with (params, residuals) when `residuals`
-            encounters a new parameter vector.
-        optimizer : str, optional
-            Override the default optimizer for this fit. If None, uses self.optimizer.
+            Function invoked with ``(params, residuals)`` whenever a new
+            parameter vector is recorded.
         **kwargs
-            Additional keyword arguments passed to the specific optimizer.
+            Additional keyword arguments forwarded directly to
+            :func:`least_squares`.
 
         Returns
         -------
         scipy.optimize.OptimizeResult
-            The optimization result object.
+            Optimisation result from :func:`least_squares`.
         """
-        # Use provided optimizer or fall back to instance default
-        opt_method = optimizer if optimizer is not None else self.optimizer
-
         # Reset history and callback state
         self.history = []
-        self.de_history = []
         self._last_recorded_params = None
         self._verbose = verbose
         self._user_callback = callback
 
-        # Infer initial parameters if not provided, using midpoint of bounds
-        if self.params_initial is None:
+        if params_initial is not None:
+            initial = np.asarray(params_initial, dtype=float)
+        else:
             if bounds is None:
                 raise ValueError(
-                    "No initial parameters and no bounds provided to infer initial guess."
+                    "params_initial must be provided when bounds are omitted."
                 )
             lower, upper = bounds
             lower = np.asarray(lower, dtype=float)
             upper = np.asarray(upper, dtype=float)
-            self.params_initial = (lower + upper) / 2.0
+            initial = (lower + upper) / 2.0
             if verbose:
                 print(
-                    f"Initial parameters not provided; using midpoint of bounds: {self.params_initial}"
+                    "Initial parameters not provided; using midpoint of bounds:"
+                    f" {initial}"
                 )
 
-        # Dispatch to appropriate fitting method
-        if opt_method == "least_squares":
-            self.result = self._fit_least_squares(bounds, verbose, **kwargs)
-        elif opt_method == "differential_evolution":
-            if bounds is None:
-                raise ValueError("bounds must be provided for differential_evolution")
-            self.result = self._fit_differential_evolution(bounds, verbose, **kwargs)
-        elif opt_method == "custom":
-            # For custom optimizers, user must provide 'optimizer_func' in kwargs
-            if "optimizer_func" not in kwargs:
-                raise ValueError(
-                    "For 'custom' optimizer, must provide 'optimizer_func' in kwargs"
-                )
-            self.result = self._fit_custom(bounds, verbose, **kwargs)
-        else:
-            raise ValueError(f"Unknown optimizer: {opt_method}")
+        result = self._fit_least_squares(initial, bounds, verbose, **kwargs)
+        self.result = result
+        return result
 
-        return self.result
-
-    def _fit_least_squares(self, bounds, verbose, **ls_kwargs):
+    def _fit_least_squares(
+        self,
+        initial: np.ndarray,
+        bounds: Optional[Tuple[Sequence[float], Sequence[float]]],
+        verbose: int,
+        **ls_kwargs,
+    ):
         """Internal helper wrapping :func:`scipy.optimize.least_squares`."""
         if bounds is not None:
             ls_kwargs["bounds"] = bounds
-        return least_squares(
-            self.residuals, self.params_initial, verbose=verbose, **ls_kwargs
-        )
+        return least_squares(self.residuals, initial, verbose=verbose, **ls_kwargs)
 
-    def _fit_differential_evolution(self, bounds, verbose, **de_kwargs):
-        """Internal helper coordinating DE + least-squares refinement."""
-        lower, upper = bounds
-        if len(lower) != len(upper):
-            raise ValueError("Lower and upper bounds must have the same length.")
-        de_bounds = list(zip(lower, upper))
-
-        # Extract specific DE parameters
-        de_polish = de_kwargs.pop("de_polish", False)
-        ls_kwargs = de_kwargs.pop("ls_kwargs", {})
-
-        # Ensure 'polish' and 'disp' are not duplicated
-        de_kwargs.pop("polish", None)
-        de_kwargs.pop("disp", None)
-
-        # Setup DE callback for verbose output
-        if verbose and "callback" not in de_kwargs:
-            _de_gen = {"count": 0}
-
-            def _de_callback(xk, convergence):
-                _de_gen["count"] += 1
-                cost = float(np.sum(self.residuals(xk) ** 2))
-                self.de_history.append((xk.copy(), cost))
-                print(
-                    f"[DE] generation {_de_gen['count']}: cost={cost:.6g}, params={xk}"
-                )
-
-            de_kwargs["callback"] = _de_callback
-
-        # Objective for DE: sum of squared residuals (scalar)
-        def _objective(p):
-            p = np.asarray(p, dtype=float)
-            return float(np.sum(self.residuals(p) ** 2))
-
-        # Stage 1: global search (DE)
-        de_result = differential_evolution(
-            _objective,
-            bounds=de_bounds,
-            polish=de_polish,
-            disp=bool(verbose),
-            **de_kwargs,
-        )
-
-        # Stage 2: local refinement with least squares
-        original_init = self.params_initial
-        self.params_initial = de_result.x
-        try:
-            ls_result = self._fit_least_squares(bounds, verbose, **ls_kwargs)
-        finally:
-            self.params_initial = original_init
-
-        # Attach DE output for transparency
-        ls_result.de_result = de_result
-        return ls_result
-
-    def _fit_custom(self, bounds, verbose, **kwargs):
-        """Invoke a user supplied optimiser with the standard objective."""
-        optimizer_func = kwargs.pop("optimizer_func")
-
-        # The custom optimizer should accept:
-        # - objective function (returns scalar cost)
-        # - initial parameters
-        # - bounds (optional)
-        # - any additional kwargs
-        def _objective(p):
-            p = np.asarray(p, dtype=float)
-            return float(np.sum(self.residuals(p) ** 2))
-
-        return optimizer_func(
-            _objective, self.params_initial, bounds=bounds, verbose=verbose, **kwargs
-        )
-
-    def fit_with_de(
-        self,
-        bounds: Tuple[Sequence[float], Sequence[float]],
-        de_kwargs: Optional[dict] = None,
-        ls_kwargs: Optional[dict] = None,
-        de_polish: bool = False,
-        verbose: int = 0,
-    ):
-        """
-        Convenience method for two-stage fit using differential evolution
-        followed by least-squares refinement. This is equivalent to calling
-        fit(optimizer="differential_evolution", ...).
-
-        Parameters
-        ----------
-        bounds : tuple
-            Tuple ``(lower_bounds, upper_bounds)`` for parameter bounds.
-        de_kwargs : dict, optional
-            Extra keyword arguments for differential_evolution.
-        ls_kwargs : dict, optional
-            Extra keyword arguments for the subsequent least_squares stage.
-        de_polish : bool, default ``False``
-            Whether to let DE perform its own internal L‑BFGS‑B "polish" step.
-        verbose : int, default ``0``
-            Verbosity level.
-
-        Returns
-        -------
-        scipy.optimize.OptimizeResult
-            The result object with an extra attribute ``de_result``.
-        """
-        # Combine parameters into unified kwargs
-        kwargs = de_kwargs.copy() if de_kwargs else {}
-        kwargs["de_polish"] = de_polish
-        kwargs["ls_kwargs"] = ls_kwargs or {}
-
-        return self.fit(
-            bounds=bounds, verbose=verbose, optimizer="differential_evolution", **kwargs
-        )
+    # differential-evolution-based helpers have been removed for simplicity.
 
     def get_theoretical_curve(
         self,
@@ -423,7 +281,11 @@ class TransitionFitter:
 
         # Select parameters
         if params is None:
-            params = self.result.x if self.result is not None else self.params_initial
+            if self.result is None:
+                raise RuntimeError(
+                    "No fitted parameters available. Provide 'params' explicitly."
+                )
+            params = self.result.x
         params = np.asarray(params, dtype=float)
 
         # Select phi_ext values
@@ -822,17 +684,6 @@ class TransitionFitter:
             cost_reduction = cost_reduction_percent = avg_change_rate = 0
             param_std = np.zeros(len(self.result.x))
 
-        # Differential Evolution history if available
-        de_analysis = {}
-        if self.de_history:
-            de_costs = [cost for params, cost in self.de_history]
-            de_analysis = {
-                "n_generations": len(de_costs),
-                "initial_cost": de_costs[0] if de_costs else None,
-                "final_cost": de_costs[-1] if de_costs else None,
-                "cost_evolution": de_costs,
-            }
-
         return {
             "n_iterations": n_iterations,
             "initial_cost": initial_cost,
@@ -842,7 +693,6 @@ class TransitionFitter:
             "avg_change_rate_final": avg_change_rate,
             "parameter_stability": param_std.tolist(),
             "cost_evolution": costs,
-            "differential_evolution": de_analysis if de_analysis else None,
         }
 
     def get_transition_analysis(self) -> dict:
@@ -916,7 +766,7 @@ class TransitionFitter:
 
         return {
             "fit_info": {
-                "optimizer": self.optimizer,
+                "optimizer": "least_squares",
                 "success": self.result.success
                 if hasattr(self.result, "success")
                 else True,
@@ -926,9 +776,6 @@ class TransitionFitter:
             },
             "parameters": {
                 "values": self.result.x.tolist(),
-                "initial_values": self.params_initial.tolist()
-                if self.params_initial is not None
-                else None,
             },
             "fit_statistics": self.get_fit_statistics(),
             "residual_analysis": self.get_residual_analysis(),
@@ -964,7 +811,7 @@ class TransitionFitter:
         print("=" * 60)
 
         # Basic fit info
-        print(f"Optimizer: {self.optimizer}")
+        print("Optimizer: least_squares")
         print(f"Success: {getattr(self.result, 'success', 'Unknown')}")
         print(f"Function evaluations: {getattr(self.result, 'nfev', 'N/A')}")
 
@@ -1028,112 +875,7 @@ class TransitionFitter:
 
         print("=" * 60)
 
-    def fit_multistart(
-        self,
-        n_starts: int,
-        bounds: Tuple[Sequence[float], Sequence[float]],
-        perturb_scale: float = 0.1,
-        optimizer: Optional[str] = None,
-        verbose: int = 0,
-        **kwargs,
-    ):
-        """
-        Perform multiple fits with different starting points and return the best result.
-
-        Parameters
-        ----------
-        n_starts : int
-            Number of different starting points to try.
-        bounds : tuple
-            Tuple (lower_bounds, upper_bounds) for parameter bounds.
-        perturb_scale : float, default 0.1
-            Scale for random perturbations of initial parameters.
-        optimizer : str, optional
-            Override the default optimizer. If None, uses self.optimizer.
-        verbose : int, default 0
-            Verbosity level.
-        **kwargs
-            Additional arguments passed to the fit method.
-
-        Returns
-        -------
-        scipy.optimize.OptimizeResult
-            The best result from all starts.
-        """
-        if self.params_initial is None:
-            if bounds is None:
-                raise ValueError("No initial parameters and no bounds provided.")
-            lower, upper = bounds
-            lower = np.asarray(lower, dtype=float)
-            upper = np.asarray(upper, dtype=float)
-            self.params_initial = (lower + upper) / 2.0
-
-        original_params = self.params_initial.copy()
-        best_result = None
-        best_cost = np.inf
-        all_results = []
-
-        lower, upper = bounds
-        lower = np.asarray(lower, dtype=float)
-        upper = np.asarray(upper, dtype=float)
-
-        for start in range(n_starts):
-            if verbose:
-                print(f"Multistart {start + 1}/{n_starts}")
-
-            if start == 0:
-                # First start uses original initial parameters
-                self.params_initial = original_params.copy()
-            else:
-                # Generate random perturbation within bounds
-                perturbation = np.random.normal(0, perturb_scale, len(original_params))
-                perturbed_params = original_params + perturbation
-                # Ensure within bounds
-                perturbed_params = np.clip(perturbed_params, lower, upper)
-                self.params_initial = perturbed_params
-
-            try:
-                result = self.fit(
-                    bounds=bounds,
-                    verbose=max(0, verbose - 1),
-                    optimizer=optimizer,
-                    **kwargs,
-                )
-
-                cost = (
-                    result.cost
-                    if hasattr(result, "cost")
-                    else np.sum(self.residuals(result.x) ** 2)
-                )
-                all_results.append((result, cost))
-
-                if cost < best_cost:
-                    best_cost = cost
-                    best_result = result
-
-                if verbose:
-                    print(f"  Cost: {cost:.6g}")
-
-            except Exception as e:
-                if verbose:
-                    print(f"  Failed: {str(e)}")
-                continue
-
-        # Restore original parameters
-        self.params_initial = original_params
-
-        if best_result is not None:
-            self.result = best_result
-            if verbose:
-                print(f"Best result: cost = {best_cost:.6g}")
-        else:
-            raise RuntimeError("All multistart attempts failed.")
-
-        # Attach multistart information
-        best_result.multistart_results = all_results
-        best_result.n_starts = n_starts
-
-        return best_result
+    # Multi-start convenience wrappers were removed to keep the interface lean.
 
     def save_results_csv(self, filepath: str):
         """
@@ -1156,7 +898,6 @@ class TransitionFitter:
             writer.writerow(["# For complete analysis, use pickle serialization"])
             writer.writerow(["params"] + [str(p) for p in self.result.x.tolist()])
             writer.writerow(["cost", str(self.result.cost)])
-            writer.writerow(["optimizer", self.optimizer])
             # Blank line before data
             writer.writerow([])
             # Header row
@@ -1276,17 +1017,17 @@ if __name__ == "__main__":
         ],
     }
 
-    print("=== TRANSITIONFITTER ENHANCED ANALYSIS DEMO ===\n")
+    print("=== TRANSITIONFITTER ANALYSIS DEMO ===\n")
 
     # Example 1: Basic fit with comprehensive analysis
     print("1. Basic fit with analysis:")
     fitter = TransitionFitter(
         model_func=example_hamiltonian,
-        params_initial=[1.0, 10.0],
         data=data_example,
-        optimizer="least_squares",
     )
-    result = fitter.fit(bounds=([0.0, 5.0], [5.0, 15.0]), verbose=1)
+    result = fitter.fit(
+        params_initial=[1.0, 10.0], bounds=([0.0, 5.0], [5.0, 15.0]), verbose=1
+    )
 
     # Print formatted summary
     fitter.print_fit_summary()
@@ -1316,42 +1057,9 @@ if __name__ == "__main__":
 
     print("\n" + "=" * 60)
 
-    # Example 3: Multistart optimization
-    print("3. Multistart optimization:")
-    best_result = fitter.fit_multistart(
-        n_starts=3, bounds=([0.0, 5.0], [5.0, 15.0]), perturb_scale=0.2, verbose=1
-    )
-    print(f"Best cost from {best_result.n_starts} starts: {best_result.cost:.6g}")
-
-    print("\n" + "=" * 60)
-
-    # Example 4: Comprehensive report
-    print("4. Comprehensive report:")
+    # Example 3: Comprehensive report
+    print("3. Comprehensive report:")
     report = fitter.get_comprehensive_report()
     print(f"Optimizer: {report['fit_info']['optimizer']}")
     print(f"Success: {report['fit_info']['success']}")
     print(f"Function evaluations: {report['fit_info']['n_function_evaluations']}")
-
-    # Example 5: Using differential evolution with analysis
-    print("\n5. Differential Evolution with analysis:")
-    fitter_de = TransitionFitter(
-        model_func=example_hamiltonian,
-        params_initial=[1.0, 10.0],
-        data=data_example,
-        optimizer="differential_evolution",
-    )
-    result_de = fitter_de.fit_with_de(bounds=([0.0, 5.0], [5.0, 15.0]), verbose=1)
-
-    # Convergence analysis
-    convergence = fitter_de.get_convergence_analysis()
-    if convergence["n_iterations"] > 0:
-        print(f"Convergence: {convergence['n_iterations']} iterations")
-        print(f"Cost reduction: {convergence['cost_reduction_percent']:.2f}%")
-
-    # Transition-specific analysis
-    transition_analysis = fitter_de.get_transition_analysis()
-    for transition, stats_t in transition_analysis.items():
-        print(
-            f"Transition {transition}: R² = {stats_t['r_squared']:.4f}, "
-            f"RMSE = {stats_t['rmse']:.6g}"
-        )
