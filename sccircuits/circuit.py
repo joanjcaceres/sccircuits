@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Optional, Union
+from typing import Optional, Sequence, Union
 
 # --- SciPy imports (dense & sparse) ---
 from scipy.sparse import diags
@@ -22,36 +22,41 @@ class Circuit:
     
     def __init__(
         self,
-        frequencies: Union[np.ndarray, list[float]],
-        phase_zpf: Union[np.ndarray, list[float]],
-        dimensions: list[int],
+        *,
+        non_linear_frequency: float,
+        non_linear_phase_zpf: float,
+        linear_frequencies: Optional[Sequence[float]],
+        linear_couplings: Optional[Sequence[float]],
+        dimensions: Sequence[int],
         Ej: float,
         Gamma: Optional[float] = None,
         epsilon_r: Optional[float] = None,
-        phase_ext: Optional[float] = 0,
-        use_bogoliubov: Optional[bool] = False,
+        phase_ext: float = 0.0,
+        collective_frequency: Optional[float] = None,
     ):
         """
         Initializes a Circuit object for superconducting circuit analysis.
         
         Parameters
         ----------
-        frequencies : Union[np.ndarray, list[float]]
-            Linear mode frequencies in GHz.
-        phase_zpf : Union[np.ndarray, list[float]]
-            Phase zero-point fluctuations in radians for each mode.
-        dimensions : list[int]
-            Dimensions of the circuit system.
+        non_linear_frequency : float
+            Frequency of the nonlinear collective mode in GHz.
+        non_linear_phase_zpf : float
+            Zero-point phase fluctuation of the nonlinear mode (radians).
+        linear_frequencies : Sequence[float] or None
+            Frequencies of the remaining linear modes (GHz). Length must be
+            len(dimensions) - 1 when multiple modes are present.
+        linear_couplings : Sequence[float] or None
+            Sequential coupling strengths between modes (GHz). Length must match
+            linear_frequencies.
+        dimensions : Sequence[int]
+            Hilbert-space dimensions for each mode.
         Ej : float
             Josephson energy in GHz.
         Gamma : Optional[float], optional
-            Fermionic coupling strength in GHz. If provided along with epsilon_r, 
-            includes a fermionic mode coupled to the primary bosonic mode.
-            Default is None (no fermionic coupling).
+            Fermionic coupling strength in GHz. Provide together with epsilon_r.
         epsilon_r : Optional[float], optional
-            Fermionic energy level spacing in GHz. If provided along with Gamma,
-            includes a fermionic mode with Hamiltonian 2*epsilon_r*c†c.
-            Default is None (no fermionic mode).
+            Fermionic energy level spacing in GHz. Provide together with Gamma.
         phase_ext : float, optional
             External flux phase in radians, default is 0.
         use_bogoliubov : bool, optional
@@ -61,35 +66,55 @@ class Circuit:
         Raises
         ------
         ValueError
-            If frequencies, phase_zpf, and dimensions have different lengths,
-            or if any frequency or phase_zpf is non-positive, or if Ej exceeds
-            the stability limit when use_bogoliubov=True.
+            If dimensions are invalid, frequencies are non-positive, or fermionic
+            parameters are supplied inconsistently.
         """
 
-        # Validate that frequencies, phase_zpf, and dimensions are of the same length
-        if len(frequencies) != len(phase_zpf) or len(frequencies) != len(dimensions):
-            raise ValueError(
-                "Frequencies, phase_zpf, and dimensions must have the same length."
-                f"But got {len(frequencies)}, {len(phase_zpf)}, and {len(dimensions)}."
-            )
+        self.non_linear_frequency = float(non_linear_frequency)
+        self.non_linear_phase_zpf = float(non_linear_phase_zpf)
 
-        self.frequencies = np.array(frequencies)
-        self.phase_zpf = np.array(phase_zpf)
+        if self.non_linear_frequency <= 0:
+            raise ValueError("non_linear_frequency must be positive.")
+        if self.non_linear_phase_zpf <= 0:
+            raise ValueError("non_linear_phase_zpf must be positive.")
 
-        if np.any(self.frequencies <= 0):
-            raise ValueError("All frequencies must be positive.")
-        if np.any(self.phase_zpf <= 0):
-            raise ValueError("All phase_zpf must be positive.")
+        self.dimensions = [int(d) for d in dimensions]
+        if not self.dimensions:
+            raise ValueError("At least one mode dimension must be specified.")
+        if any(d <= 0 for d in self.dimensions):
+            raise ValueError("All mode dimensions must be positive integers.")
 
-        self.dimensions = dimensions
+        self.modes = len(self.dimensions)
+        expected_linear_modes = self.modes - 1
+
+        if expected_linear_modes == 0:
+            linear_frequencies_array = np.array([], dtype=float)
+            linear_couplings_array = np.array([], dtype=float)
+        else:
+            if linear_frequencies is None or linear_couplings is None:
+                raise ValueError(
+                    "linear_frequencies and linear_couplings must be provided for multi-mode circuits."
+                )
+            if len(linear_frequencies) != expected_linear_modes or len(linear_couplings) != expected_linear_modes:
+                raise ValueError(
+                    "linear_frequencies and linear_couplings must each have length len(dimensions) - 1."
+                )
+            linear_frequencies_array = np.asarray(linear_frequencies, dtype=float)
+            linear_couplings_array = np.asarray(linear_couplings, dtype=float)
+
+        if np.any(linear_frequencies_array <= 0):
+            raise ValueError("All linear_frequencies must be positive.")
+        if np.any(linear_couplings_array < 0):
+            raise ValueError("All linear_couplings must be non-negative.")
+
+        self.linear_frequencies = linear_frequencies_array
+        self.linear_coupling = linear_couplings_array
+
         self.Ej = Ej
         self.Gamma = Gamma
         self.epsilon_r = epsilon_r
         self.phase_ext = phase_ext
-        self.use_bogoliubov = use_bogoliubov
-        self.modes = len(self.dimensions)
-        
-        # Validate fermionic coupling parameters
+
         self.has_fermionic_coupling = (Gamma is not None and epsilon_r is not None)
         if (Gamma is None and epsilon_r is not None) or (Gamma is not None and epsilon_r is None):
             raise ValueError("Both Gamma and epsilon_r must be provided together for fermionic coupling, or both should be None.")
@@ -158,9 +183,8 @@ class Circuit:
         hamiltonian -= self.Ej * cos_full_op
 
         if return_coupling_ops:
-            # Calculate cos_half_op only when fermionic coupling is enabled
             if self.has_fermionic_coupling:
-                cos_half_op = cosm(phi_op / 2)  # For fermionic coupling (no phase_ext)
+                cos_half_op = cosm(phi_op / 2)
             else:
                 cos_half_op = None  # Not needed for purely bosonic systems
             
