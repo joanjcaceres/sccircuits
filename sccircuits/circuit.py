@@ -123,8 +123,8 @@ class Circuit:
         Ej : float
             Josephson energy in GHz.
         Ej_second : float, optional
-            Amplitude of the second harmonic Josephson term in GHz. Defaults to 0
-            to recover the standard single cosine potential.
+            Coefficient for the -EJ2*cos(2*phi) second harmonic Josephson term in GHz.
+            Defaults to 0 to recover the standard single cosine potential.
         Gamma : Optional[float], optional
             Fermionic coupling strength in GHz. Provide together with epsilon_r.
         epsilon_r : Optional[float], optional
