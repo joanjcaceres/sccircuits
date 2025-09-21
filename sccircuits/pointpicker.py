@@ -878,12 +878,21 @@ class PointPicker:
         filename: str,
         *,
         include_sigma: bool = False,
+        x_scale: float = 1.0,
     ) -> PointDict:
+        """Load points saved via :meth:`save_to_csv`, with optional x scaling.
+
+        Parameters
+        ----------
+        filename : str
+            CSV produced by :meth:`save_to_csv` in axis-lock mode.
+        include_sigma : bool, default ``False``
+            When ``True``, include the stored uncertainty per point.
+        x_scale : float, default ``1.0``
+            Multiply each x-coordinate by this factor while loading.
         """
-        Load points from a CSV file saved by PointPicker.save_to_csv (axis_lock mode).
-        data: dict[tuple[int, int], list[tuple[float, float] | tuple[float, float, Optional[float]]]] = {}
-        Set include_sigma=True to obtain sigma values when available.
-        """
+        if x_scale <= 0:
+            raise ValueError("x_scale must be positive.")
         data: dict[tuple[int, int], list] = {}
         with open(filename, newline="") as f:
             reader = csv.reader(f)
@@ -901,7 +910,7 @@ class PointPicker:
                     sigma_str = ""
                 i = int(i_str)
                 j = int(j_str)
-                x = float(x_str)
+                x = float(x_str) * x_scale
                 y = float(y_str)
                 sigma_val = float(sigma_str) if sigma_str.strip() else None
                 key = (i, j)
@@ -909,6 +918,37 @@ class PointPicker:
                     data.setdefault(key, []).append((x, y, sigma_val))
                 else:
                     data.setdefault(key, []).append((x, y))
+        return data
+
+    def to_transition_data(
+        self,
+        *,
+        include_sigma: bool = False,
+        x_scale: float = 1.0,
+    ) -> PointDict:
+        """Return picked points grouped by transition, scaling x if needed.
+
+        Parameters
+        ----------
+        include_sigma : bool, default ``False``
+            Include the stored uncertainty alongside each point.
+        x_scale : float, default ``1.0``
+            Multiply each x-coordinate before packaging the data.
+        """
+        if x_scale <= 0:
+            raise ValueError("x_scale must be positive.")
+        data: PointDict = {}
+        for (x, y), label, sigma in zip(self.points, self.labels, self.sigmas):
+            if label is None:
+                continue
+            scaled_x = float(x) * x_scale
+            entry: Union[Tuple[float, float], Tuple[float, float, Optional[float]]]
+            if include_sigma:
+                entry = (scaled_x, float(y), sigma if sigma is not None else None)
+            else:
+                entry = (scaled_x, float(y))
+            data.setdefault((int(label[0]), int(label[1])), []).append(entry)
+
         return data
 
     def save_project(self, filename: str = "pointpicker_project.npz"):
@@ -966,7 +1006,10 @@ class PointPicker:
         return picker
 
     def to_dict(
-        self, *, include_sigma: bool = True
+        self,
+        *,
+        include_sigma: bool = True,
+        x_scale: float = 1.0,
     ) -> dict[
         tuple[int, int],
         list[tuple[float, float] | tuple[float, float, Optional[float]]],
@@ -976,6 +1019,8 @@ class PointPicker:
         data: dict[tuple[int, int], list[tuple[float, float] | tuple[float, float, Optional[float]]]] = {}
         Set include_sigma=True to retrieve sigma values alongside coordinates.
         """
+        if x_scale <= 0:
+            raise ValueError("x_scale must be positive.")
         data: dict[tuple[int, int], list[tuple[float, float]]] = {}
         for (x, y), lab, sigma in zip(self.points, self.labels, self.sigmas):
             if lab is None:
@@ -984,11 +1029,12 @@ class PointPicker:
                 key = tuple(int(val) for val in lab)
             else:
                 key = lab
+            x_val = float(x) * x_scale
             if include_sigma:
                 sigma_val = float(sigma) if sigma is not None else None
-                data.setdefault(key, []).append((float(x), float(y), sigma_val))
+                data.setdefault(key, []).append((x_val, float(y), sigma_val))
             else:
-                data.setdefault(key, []).append((float(x), float(y)))
+                data.setdefault(key, []).append((x_val, float(y)))
         return data
 
 

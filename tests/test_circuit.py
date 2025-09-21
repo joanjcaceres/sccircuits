@@ -47,7 +47,7 @@ class TestCircuit:
     def test_hamiltonian_construction(self):
         """Test Hamiltonian matrix construction."""
         circuit = Circuit([5.0], [0.1], [10], 1.0)
-        H = circuit.hamiltonian_0()
+        H = circuit.hamiltonian_nl()
         
         # Check that Hamiltonian is square matrix
         assert H.shape == (10, 10)
