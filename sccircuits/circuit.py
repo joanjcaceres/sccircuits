@@ -581,6 +581,48 @@ class Circuit:
         """Compute the inductive energy in GHz for convenience."""
         return self.collective_frequency / (2 * self.non_linear_phase_zpf**2)
 
+    @property
+    def bare_modes(self) -> dict[str, np.ndarray]:
+        """
+        Reconstruct the original bare frequencies and phase ZPFs from physical parameters.
+        
+        This method creates a tridiagonal matrix from the circuit's physical parameters,
+        diagonalizes it to obtain the bare frequencies, and reconstructs the phase ZPFs.
+        
+        Returns:
+            dict: Dictionary with keys:
+                - 'frequencies': np.ndarray of bare mode frequencies (GHz)
+                - 'phase_zpf': np.ndarray of bare mode phase ZPF amplitudes (radians)
+        """
+        n_modes = self.modes
+        
+        if n_modes == 1:
+            # Single mode case: trivial reconstruction
+            bare_frequencies = np.array([self.non_linear_frequency])
+            bare_phase_zpf = np.array([self.non_linear_phase_zpf])
+        else:
+            # Multi-mode case: create and diagonalize tridiagonal matrix
+            diagonal = np.diag([self.non_linear_frequency] + list(self.linear_frequencies), k=0)
+            off_diagonal = np.diag(self.linear_coupling, k=1) + np.diag(self.linear_coupling, k=-1)
+            tridiagonal_matrix = diagonal + off_diagonal
+            
+            bare_frequencies, eigenvectors = np.linalg.eigh(tridiagonal_matrix)
+            
+            # Use the first eigenvector (lowest frequency mode) for phase reconstruction
+            collective_eigenvector = eigenvectors[:, 0]
+            
+            # Ensure consistent sign convention (first component positive)
+            if collective_eigenvector[0] < 0:
+                collective_eigenvector *= -1
+            
+            # Scale by the phase ZPF magnitude
+            bare_phase_zpf = self.non_linear_phase_zpf * collective_eigenvector
+        
+        return {
+            'frequencies': bare_frequencies,
+            'phase_zpf': bare_phase_zpf
+        }
+
     # def _non_collective_eigsystem(self) -> np.ndarray:
     #     """
     #     Calculate the eigenvalues and eigenvectors of the non-collective system.

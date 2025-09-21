@@ -1,4 +1,4 @@
-"""Tests for the Circuit class second-harmonic implementation."""
+"""Unit tests for the Circuit class, including nonlinear and second-harmonic features."""
 
 import numpy as np
 from scipy.linalg import cosm
@@ -11,6 +11,15 @@ def _phi_operator(dimension: int, phi_zpf: float) -> np.ndarray:
     """Construct the phase operator used in the nonlinear Hamiltonian."""
     data = np.sqrt(np.arange(1, dimension))
     return phi_zpf * diags([data, data], [1, -1]).toarray()
+
+
+def _dense(matrix_like) -> np.ndarray:
+    """Convert sparse or dense inputs into a plain ndarray."""
+    if hasattr(matrix_like, "toarray"):
+        return matrix_like.toarray()
+    if hasattr(matrix_like, "A"):
+        return matrix_like.A
+    return np.asarray(matrix_like)
 
 
 def test_single_mode_initialization_defaults():
@@ -48,7 +57,7 @@ def test_second_harmonic_hamiltonian_contribution():
         phase_ext=phase_ext,
     )
 
-    h_nl = circuit.hamiltonian_nl().toarray()
+    h_nl = _dense(circuit.hamiltonian_nl())
 
     diag = freq * (np.arange(dimension) + 0.5)
     phi_op = _phi_operator(dimension, phi_zpf)
@@ -80,8 +89,8 @@ def test_second_harmonic_default_matches_explicit_zero():
         Ej_second=0.0,
     )
 
-    h_base = base.hamiltonian_nl().toarray()
-    h_zero = explicit_zero.hamiltonian_nl().toarray()
+    h_base = _dense(base.hamiltonian_nl())
+    h_zero = _dense(explicit_zero.hamiltonian_nl())
 
     assert np.allclose(h_base, h_zero)
 
@@ -96,7 +105,6 @@ def test_gradient_names_include_second_harmonic():
         Ej=0.8,
         Ej_second=0.2,
     )
-
     circuit.eigensystem(truncation=4)
     _, _, gradients, names = circuit.eigensystem_with_gradients(truncation=4)
 
@@ -104,3 +112,37 @@ def test_gradient_names_include_second_harmonic():
     idx = names.index("Ej_second")
     assert gradients.shape[1] > idx
 
+
+def test_harmonic_inputs_retrievable_after_factory_construction():
+    frequencies = [5.1, 6.2, 8.3]
+    phase_zpf = [0.12, 0.07, 0.03]
+    dimensions = [20, 10, 5]
+
+    circuit = Circuit.from_harmonic_modes(
+        frequencies=frequencies,
+        phase_zpf=phase_zpf,
+        dimensions=dimensions,
+        Ej=0.9,
+        Ej_second=0.15,
+    )
+
+    assert np.allclose(circuit.frequencies, frequencies)
+    assert np.allclose(circuit.phase_zpf, phase_zpf)
+
+    modes = circuit.harmonic_modes()
+    assert np.allclose(modes["frequencies"], frequencies)
+    assert np.allclose(modes["phase_zpf"], phase_zpf)
+
+
+def test_harmonic_modes_raises_when_not_available():
+    circuit = Circuit(
+        non_linear_frequency=4.0,
+        non_linear_phase_zpf=0.1,
+        linear_frequencies=None,
+        linear_couplings=None,
+        dimensions=[6],
+        Ej=0.7,
+    )
+
+    with np.testing.assert_raises(AttributeError):
+        circuit.harmonic_modes()
