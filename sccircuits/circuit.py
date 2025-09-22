@@ -585,44 +585,61 @@ class Circuit:
 
     @property
     def bare_modes(self) -> dict[str, np.ndarray]:
+        """Convenience wrapper for :meth:`compute_bare_modes` using the circuit instance."""
+        tridiagonal = self._build_lanczos_tridiagonal()
+        return self.compute_bare_modes(
+            tridiagonal=tridiagonal,
+            non_linear_phase_zpf=self.non_linear_phase_zpf,
+        )
+
+    def _build_lanczos_tridiagonal(self) -> np.ndarray:
+        """Construct the Lanczos tridiagonal matrix from current physical parameters."""
+        diagonal = [self.non_linear_frequency]
+        diagonal.extend(self.linear_frequencies.tolist())
+        tridiagonal = np.diag(diagonal)
+        if self.linear_mode_count > 0:
+            off_diag = np.diag(self.linear_coupling, k=1) + np.diag(self.linear_coupling, k=-1)
+            tridiagonal = tridiagonal + off_diag
+        return tridiagonal
+
+    @staticmethod
+    def compute_bare_modes(
+        *,
+        tridiagonal: np.ndarray,
+        non_linear_phase_zpf: float,
+    ) -> dict[str, np.ndarray]:
         """
-        Reconstruct the original bare frequencies and phase ZPFs from physical parameters.
-        
-        This method creates a tridiagonal matrix from the circuit's physical parameters,
-        diagonalizes it to obtain the bare frequencies, and reconstructs the phase ZPFs.
-        
-        Returns:
-            dict: Dictionary with keys:
-                - 'frequencies': np.ndarray of bare mode frequencies (GHz)
-                - 'phase_zpf': np.ndarray of bare mode phase ZPF amplitudes (radians)
+        Recover harmonic frequencies and phase zero-point fluctuations from a Lanczos tridiagonal matrix.
+
+        Parameters
+        ----------
+        tridiagonal : np.ndarray
+            Symmetric tridiagonal matrix produced by the Lanczos transform of the harmonic sector.
+        non_linear_phase_zpf : float
+            Zero-point phase fluctuation amplitude of the collective nonlinear mode.
+
+        Returns
+        -------
+        dict
+            Dictionary with keys ``'frequencies'`` and ``'phase_zpf'`` (both ``np.ndarray``).
         """
-        n_modes = self.modes
-        
-        if n_modes == 1:
-            # Single mode case: trivial reconstruction
-            bare_frequencies = np.array([self.non_linear_frequency])
-            bare_phase_zpf = np.array([self.non_linear_phase_zpf])
-        else:
-            # Multi-mode case: create and diagonalize tridiagonal matrix
-            diagonal = np.diag([self.non_linear_frequency] + list(self.linear_frequencies), k=0)
-            off_diagonal = np.diag(self.linear_coupling, k=1) + np.diag(self.linear_coupling, k=-1)
-            tridiagonal_matrix = diagonal + off_diagonal
-            
-            bare_frequencies, eigenvectors = np.linalg.eigh(tridiagonal_matrix)
-            
-            # Use the first eigenvector (lowest frequency mode) for phase reconstruction
-            collective_eigenvector = eigenvectors[:, 0]
-            
-            # Ensure consistent sign convention (first component positive)
-            if collective_eigenvector[0] < 0:
-                collective_eigenvector *= -1
-            
-            # Scale by the phase ZPF magnitude
-            bare_phase_zpf = self.non_linear_phase_zpf * collective_eigenvector
-        
+        if tridiagonal.ndim != 2 or tridiagonal.shape[0] != tridiagonal.shape[1]:
+            raise ValueError("tridiagonal must be a square matrix.")
+        if non_linear_phase_zpf <= 0:
+            raise ValueError("non_linear_phase_zpf must be positive.")
+
+        bare_frequencies, eigenvectors = np.linalg.eigh(tridiagonal)
+
+        # First mode corresponds to the collective nonlinear mode (lowest frequency)
+        collective_eigenvector = eigenvectors[:, 0]
+        if collective_eigenvector[0] < 0:
+            collective_eigenvector *= -1
+
+        bare_phase_zpf = non_linear_phase_zpf * collective_eigenvector
+
         return {
-            'frequencies': bare_frequencies,
-            'phase_zpf': bare_phase_zpf
+            "frequencies": bare_frequencies,
+            "phase_zpf": bare_phase_zpf,
         }
 
     # def _non_collective_eigsystem(self) -> np.ndarray:
