@@ -155,7 +155,7 @@ class CircuitFitter:
         self.params_initial = self._build_initial_parameter_vector()
         self.bounds = self._build_bounds()
 
-        jacobian_callable = None if self.has_fermionic_coupling else self.eigenvalues_jacobian
+        jacobian_callable = None #if self.has_fermionic_coupling else self.eigenvalues_jacobian
 
         self.transition_fitter = TransitionFitter(
             model_func=self.eigenvalues_function,
