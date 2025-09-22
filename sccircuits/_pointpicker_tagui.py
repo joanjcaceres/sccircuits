@@ -164,7 +164,7 @@ class JupyterTagUI(BaseTagUI):
             i = int(self._widget.i_field.value)
             j = int(self._widget.j_field.value)
         except Exception:
-            self._write_feedback("Valores inválidos.")
+            self._write_feedback("Invalid values.")
             return
         sigma_raw = str(self._widget.sigma_field.value).strip()
         sigma_val: Optional[float]
@@ -175,7 +175,7 @@ class JupyterTagUI(BaseTagUI):
                 self._write_feedback("Valores inválidos.")
                 return
             if sigma_val <= 0:
-                self._write_feedback("sigma debe ser > 0 o dejar vacío.")
+                self._write_feedback("sigma must be > 0 or leave empty.")
                 return
         else:
             sigma_val = None
@@ -185,9 +185,9 @@ class JupyterTagUI(BaseTagUI):
             self._write_feedback(str(exc))
             return
         msg = (
-            f"Punto #{idx} etiquetado con ({i},{j}) sin sigma"
+            f"Point #{idx} tagged with ({i},{j}) without sigma"
             if sigma_val is None
-            else f"Punto #{idx} etiquetado con ({i},{j}) y sigma={sigma_val}"
+            else f"Point #{idx} tagged with ({i},{j}) and sigma={sigma_val}"
         )
         self._write_feedback(msg)
         self._pending_idx = None
@@ -199,7 +199,7 @@ class JupyterTagUI(BaseTagUI):
             return
         idx = self._pending_idx
         self.picker._remove_tag(idx)
-        self._write_feedback(f"Punto #{idx} tag removed ✓")
+        self._write_feedback(f"Point #{idx} tag removed ✓")
         assert self._widget is not None
         self._widget.i_field.value = 0
         self._widget.j_field.value = 0
@@ -296,10 +296,11 @@ class MatplotlibTagUI(BaseTagUI):
     # Internal helpers ---------------------------------------------------
     def _build_widgets(self) -> _MatplotlibWidgetBundle:
         fig = self.picker.ax.figure
-        # Ensure there is enough room for the extra controls below the axes
-        desired_bottom = 0.15
-        if fig.subplotpars.bottom < desired_bottom:
-            fig.subplots_adjust(bottom=desired_bottom)
+        # Ensure there is enough room for the extra controls below the axes.
+        # The bottom margin is set to 0.15 to provide space for widget controls.
+        MATPLOTLIB_WIDGETS_BOTTOM_MARGIN = 0.15
+        if fig.subplotpars.bottom < MATPLOTLIB_WIDGETS_BOTTOM_MARGIN:
+            fig.subplots_adjust(bottom=MATPLOTLIB_WIDGETS_BOTTOM_MARGIN)
 
         bottom = 0.02
         height = 0.05
