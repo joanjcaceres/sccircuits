@@ -94,10 +94,10 @@ class Circuit:
         self,
         non_linear_frequency: float,
         non_linear_phase_zpf: float,
-        linear_frequencies: Optional[Sequence[float]],
-        linear_couplings: Optional[Sequence[float]],
         dimensions: Sequence[int],
         Ej: float,
+        linear_frequencies: Optional[Sequence[float]] = None,
+        linear_couplings: Optional[Sequence[float]] = None,
         Ej_second: float = 0.0,
         Gamma: Optional[float] = None,
         epsilon_r: Optional[float] = None,
@@ -112,12 +112,14 @@ class Circuit:
             Frequency of the nonlinear collective mode in GHz.
         non_linear_phase_zpf : float
             Zero-point phase fluctuation of the nonlinear mode (radians).
-        linear_frequencies : Sequence[float] or None
-            Frequencies of the remaining linear modes (GHz). Length must be
-            len(dimensions) - 1 when multiple modes are present.
-        linear_couplings : Sequence[float] or None
-            Sequential coupling strengths between modes (GHz). Length must match
-            linear_frequencies.
+        linear_frequencies : Sequence[float] or None, optional
+            Frequencies of the remaining linear modes (GHz). Provide a sequence of
+            length ``len(dimensions) - 1`` when multiple modes are present; defaults
+            to ``None`` for single-mode circuits.
+        linear_couplings : Sequence[float] or None, optional
+            Sequential coupling strengths between modes (GHz). Provide a sequence of
+            length ``len(dimensions) - 1`` when multiple modes are present; defaults
+            to ``None`` for single-mode circuits.
         dimensions : Sequence[int]
             Hilbert-space dimensions for each mode.
         Ej : float
