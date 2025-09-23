@@ -37,7 +37,7 @@ class IterativeHamiltonianDiagonalizer:
                                            Values: transformation matrices from full to truncated basis.
     """
 
-    def __init__(self, num_keep: "int | Sequence[int] | Callable[[int], int]"):
+    def __init__(self, num_keep: int | Sequence[int] | Callable[[int], int]):
         """
         Initialize the iterative diagonalizer.
 
