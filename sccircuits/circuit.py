@@ -160,6 +160,8 @@ class Circuit:
         if return_coupling_ops:
             # Calculate cos_half_op only when fermionic coupling is enabled
             if self.has_fermionic_coupling:
+                if phase_ext is not None:
+                    phi_op += phase_ext * np.eye(dimension_bosonic)
                 cos_half_op = cosm(phi_op / 2)  # For fermionic coupling (no phase_ext)
             else:
                 cos_half_op = None  # Not needed for purely bosonic systems
@@ -230,7 +232,8 @@ class Circuit:
                 dimension_bosonic = self.dimensions[0]
                 data = np.sqrt(np.arange(1, dimension_bosonic))
                 phi_op = self.non_linear_phase_zpf * diags([data, data], [1, -1]).toarray()
-                
+                if phase_ext is not None:
+                    phi_op += phase_ext * np.eye(dimension_bosonic)
                 cos_half_op = cosm(phi_op / 2)
                 next_coupling_op = None
             
