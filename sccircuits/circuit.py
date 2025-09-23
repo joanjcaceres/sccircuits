@@ -295,12 +295,22 @@ class Circuit:
         return 2 * self.epsilon_r * np.diag([0, 1])
     
     
-    def eigensystem(self, truncation: int, phase_ext: Optional[float] = None):
+    def eigensystem(
+        self,
+        truncation: "int | Sequence[int]",
+        phase_ext: Optional[float] = None,
+    ):
         """
         Calculate the eigenvalues and eigenvectors of the total Circuit Hamiltonian
         using sequential coupling logic.
-        
-        The truncation parameter is handled adaptively by the IterativeHamiltonianDiagonalizer:
+
+        The ``truncation`` argument can be either a single integer applied to every
+        diagonalization step or a sequence specifying the number of states to keep
+        after each mode is incorporated (additional entries are ignored once all
+        modes have been processed).
+
+        The truncation parameter is handled adaptively by the
+        :class:`IterativeHamiltonianDiagonalizer`:
         - It automatically adapts to the actual system dimensions at each step
         - Works correctly with fermionic modes (2×2) and bosonic modes of any size
         """

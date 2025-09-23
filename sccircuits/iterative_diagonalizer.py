@@ -1,4 +1,6 @@
 import numpy as np
+import numbers
+from collections.abc import Callable, Sequence
 from typing import Dict, Optional
 from scipy import sparse
 from scipy.linalg import eigh
@@ -23,12 +25,11 @@ class IterativeHamiltonianDiagonalizer:
     4. etc.
 
     Attributes:
-        num_keep                 (int): Number of low-energy states to retain at each step.
-        energies                 (np.ndarray): Current truncated eigenvalues, shape (num_keep,).
-        basis_vectors            (np.ndarray): Columns are the truncated basis vectors,
-                                              shape (prev_dim, num_keep).
-        effective_coupling       (np.ndarray): Effective coupling operator for the current mode,
-                                              shape (num_keep, num_keep).
+        num_keep                 (int | sequence | callable): Truncation specification.
+        energies                 (np.ndarray): Current truncated eigenvalues (length equals
+                                              the active truncation for the latest mode).
+        basis_vectors            (np.ndarray): Columns are the truncated basis vectors.
+        effective_coupling       (np.ndarray): Effective coupling operator for the current mode.
         tracked_operators        (dict): Dictionary storing operators to track through diagonalization.
         _mode_coupling_operators (dict): Internal storage for each mode's coupling operator.
         _mode_basis_transformations (dict): Maps mode index to its basis transformation matrix (evecs).
@@ -36,14 +37,18 @@ class IterativeHamiltonianDiagonalizer:
                                            Values: transformation matrices from full to truncated basis.
     """
 
-    def __init__(self, num_keep: int):
+    def __init__(self, num_keep: "int | Sequence[int] | Callable[[int], int]"):
         """
         Initialize the iterative diagonalizer.
 
         Args:
-            num_keep (int): Number of eigenstates to keep after each diagonalization.
+            num_keep: Either a single truncation value applied at every step, a
+                sequence specifying the truncation after each mode is added, or a
+                callable returning the truncation when provided the mode index (0
+                for the first mode, 1 for the next, etc.).
         """
-        self.num_keep = num_keep
+        self.num_keep = num_keep  # kept for backwards compatibility / introspection
+        self._num_keep_spec = self._normalise_num_keep(num_keep)
         self.energies: np.ndarray = None
         self.basis_vectors: np.ndarray = None
         self.effective_coupling: np.ndarray = None
@@ -77,7 +82,7 @@ class IterativeHamiltonianDiagonalizer:
         
         # Adapt truncation to actual system size
         h0_size = hamiltonian.shape[0]
-        effective_truncation = min(self.num_keep, h0_size)
+        effective_truncation = self._effective_truncation(0, h0_size)
         evals, evecs = eigh(hamiltonian, subset_by_index=(0, effective_truncation - 1))
         self.energies = evals
         self.basis_vectors = evecs
@@ -150,7 +155,7 @@ class IterativeHamiltonianDiagonalizer:
 
         # Adapt truncation to actual system size
         total_size = H_total.shape[0]
-        effective_truncation = min(self.num_keep, total_size)
+        effective_truncation = self._effective_truncation(self._current_mode, total_size)
 
         # Diagonalize
         evals, evecs = eigh(H_total, subset_by_index=(0, effective_truncation - 1))
@@ -281,6 +286,48 @@ class IterativeHamiltonianDiagonalizer:
         if hasattr(operator, "toarray"):
             return operator.toarray()
         return np.asarray(operator)
+
+    def _normalise_num_keep(self, spec):
+        """Normalise user-specified truncation schedule."""
+        if isinstance(spec, numbers.Integral):
+            value = int(spec)
+            if value <= 0:
+                raise ValueError("Truncation must be a positive integer.")
+            return value
+        if callable(spec):
+            return spec
+        if isinstance(spec, (str, bytes)):
+            raise TypeError("num_keep must be an integer, sequence, or callable.")
+        try:
+            seq = [int(x) for x in spec]
+        except TypeError as exc:  # not iterable
+            raise TypeError(
+                "num_keep must be an integer, sequence, or callable."
+            ) from exc
+        if not seq:
+            raise ValueError("Truncation sequence must contain at least one element.")
+        if any(val <= 0 for val in seq):
+            raise ValueError("All truncation values must be positive integers.")
+        return seq
+
+    def _resolve_truncation_value(self, mode_index: int) -> int:
+        spec = self._num_keep_spec
+        if callable(spec):
+            value = int(spec(mode_index))
+        elif isinstance(spec, list):
+            idx = min(mode_index, len(spec) - 1)
+            value = spec[idx]
+        else:
+            value = spec
+        if value <= 0:
+            raise ValueError(
+                f"Truncation for mode {mode_index} must be a positive integer (got {value})."
+            )
+        return value
+
+    def _effective_truncation(self, mode_index: int, available_dimension: int) -> int:
+        keep = self._resolve_truncation_value(mode_index)
+        return max(1, min(keep, available_dimension))
 
 if __name__ == "__main__":
     # Example usage with sequential coupling (replace with your own operator constructors)

@@ -32,7 +32,7 @@ class CircuitFitter:
         epsilon_r_bounds: Optional[Tuple[float, float]] = None,
         Gamma_bounds: Optional[Tuple[float, float]] = None,
         Ej_second_bounds: Optional[Tuple[float, float]] = None,
-        truncation: int = 40,
+        truncation: "int | Sequence[int]" = 40,
         optimizer: str = "least_squares",
         use_bogoliubov: bool = True,
         fit_Ej_second: bool = False,
@@ -46,7 +46,7 @@ class CircuitFitter:
         self.modes = len(self.dimensions)
         self.linear_mode_count = max(self.modes - 1, 0)
 
-        self.truncation = int(truncation)
+        self.truncation = truncation
         self.optimizer = optimizer
         self.use_bogoliubov = use_bogoliubov
 

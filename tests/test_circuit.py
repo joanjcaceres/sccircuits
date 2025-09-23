@@ -146,3 +146,19 @@ def test_harmonic_modes_raises_when_not_available():
 
     with np.testing.assert_raises(AttributeError):
         circuit.harmonic_modes()
+
+
+def test_dynamic_truncation_schedule_applies_per_mode():
+    circuit = Circuit(
+        non_linear_frequency=5.0,
+        non_linear_phase_zpf=0.12,
+        dimensions=[12, 6, 4],
+        Ej=1.1,
+        linear_frequencies=[6.5, 8.0],
+        linear_couplings=[0.25, 0.1],
+    )
+
+    truncation_schedule = [8, 5, 3]
+    energies, _ = circuit.eigensystem(truncation=truncation_schedule)
+
+    assert energies.shape[0] == truncation_schedule[-1]
