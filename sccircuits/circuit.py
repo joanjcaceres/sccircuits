@@ -514,7 +514,7 @@ class Circuit:
 
     def eigensystem_with_gradients(
         self,
-        truncation: "int | Sequence[int]",
+        truncation: int | Sequence[int],
         phase_ext: Optional[float] = None,
         *,
         track_operators: bool = True,
