@@ -94,10 +94,10 @@ class Circuit:
         self,
         non_linear_frequency: float,
         non_linear_phase_zpf: float,
-        linear_frequencies: Optional[Sequence[float]],
-        linear_couplings: Optional[Sequence[float]],
         dimensions: Sequence[int],
         Ej: float,
+        linear_frequencies: Optional[Sequence[float]] = None,
+        linear_couplings: Optional[Sequence[float]] = None,
         Ej_second: float = 0.0,
         Gamma: Optional[float] = None,
         epsilon_r: Optional[float] = None,
@@ -112,12 +112,14 @@ class Circuit:
             Frequency of the nonlinear collective mode in GHz.
         non_linear_phase_zpf : float
             Zero-point phase fluctuation of the nonlinear mode (radians).
-        linear_frequencies : Sequence[float] or None
-            Frequencies of the remaining linear modes (GHz). Length must be
-            len(dimensions) - 1 when multiple modes are present.
-        linear_couplings : Sequence[float] or None
-            Sequential coupling strengths between modes (GHz). Length must match
-            linear_frequencies.
+        linear_frequencies : Sequence[float] or None, optional
+            Frequencies of the remaining linear modes (GHz). Provide a sequence of
+            length ``len(dimensions) - 1`` when multiple modes are present; defaults
+            to ``None`` for single-mode circuits.
+        linear_couplings : Sequence[float] or None, optional
+            Sequential coupling strengths between modes (GHz). Provide a sequence of
+            length ``len(dimensions) - 1`` when multiple modes are present; defaults
+            to ``None`` for single-mode circuits.
         dimensions : Sequence[int]
             Hilbert-space dimensions for each mode.
         Ej : float
@@ -153,7 +155,8 @@ class Circuit:
             raise ValueError("All mode dimensions must be positive integers.")
 
         self.modes = len(self.dimensions)
-        expected_linear_modes = self.modes - 1
+        self.linear_mode_count = self.modes - 1
+        expected_linear_modes = self.linear_mode_count
 
         if expected_linear_modes == 0:
             linear_frequencies_array = np.array([], dtype=float)
@@ -191,6 +194,7 @@ class Circuit:
         self._lanczos_basis: Optional[np.ndarray] = None
         self._lanczos_tridiagonal: Optional[np.ndarray] = None
         self._lanczos_status: Optional[dict] = None
+        self._harmonic_modes_store: Optional[dict[str, np.ndarray]] = None
 
     @classmethod
     def from_harmonic_modes(
@@ -229,6 +233,7 @@ class Circuit:
         circuit._lanczos_basis = params["basis"]
         circuit._lanczos_tridiagonal = params["tridiagonal"]
         circuit._lanczos_status = params["status"]
+        circuit._store_harmonic_modes(frequencies, phase_zpf)
 
         return circuit
 
@@ -293,12 +298,25 @@ class Circuit:
         return 2 * self.epsilon_r * np.diag([0, 1])
     
     
-    def eigensystem(self, truncation: int, phase_ext: Optional[float] = None):
+    def eigensystem(
+        self,
+        truncation: int | Sequence[int],
+        phase_ext: Optional[float] = None,
+        *,
+        track_operators: bool = False,
+        store_basis: bool = False,
+    ):
         """
         Calculate the eigenvalues and eigenvectors of the total Circuit Hamiltonian
         using sequential coupling logic.
-        
-        The truncation parameter is handled adaptively by the IterativeHamiltonianDiagonalizer:
+
+        The ``truncation`` argument can be either a single integer applied to every
+        diagonalization step or a sequence specifying the number of states to keep
+        after each mode is incorporated (additional entries are ignored once all
+        modes have been processed).
+
+        The truncation parameter is handled adaptively by the
+        :class:`IterativeHamiltonianDiagonalizer`:
         - It automatically adapts to the actual system dimensions at each step
         - Works correctly with fermionic modes (2×2) and bosonic modes of any size
         """
@@ -313,10 +331,12 @@ class Circuit:
             fermionic_creation_op = np.array([[0, 0], [1, 0]], dtype=float)
             fermionic_annihilation_op = fermionic_creation_op.T.conj()
             
+            tracked_fermion = {"a_fermion": fermionic_annihilation_op} if track_operators else None
             iterator.add_initial_mode(
                 H_fermion,
                 fermionic_creation_op,  # Couples to bosonic mode
-                tracked_operators={"a_fermion": fermionic_annihilation_op},
+                tracked_operators=tracked_fermion,
+                store_basis=store_basis,
             )
             
             # Step 2: Add bosonic non-linear mode (coupled to fermion)
@@ -328,12 +348,14 @@ class Circuit:
                 collective_creation_operator if self.modes > 1 else None
             )
             
+            tracked_mode0 = {"a_mode0": collective_annihilation_operator} if track_operators else None
             iterator.add_mode(
                 hamiltonian_nl,
                 cos_half_op,           # Couples to fermionic c†  
                 next_coupling_op,      # For next bosonic coupling
                 self.Gamma,            # Coupling strength
-                tracked_operators={"a_mode0": collective_annihilation_operator},
+                tracked_operators=tracked_mode0,
+                store_basis=store_basis,
             )
             
             # Step 3: Add remaining bosonic modes
@@ -354,12 +376,14 @@ class Circuit:
                     coupling_operator_next = None
                 
                 # Add mode with sequential coupling
+                tracked_linear = {f"a_mode{idx + 1}": linear_destroy_op_k} if track_operators else None
                 iterator.add_mode(
                     hamiltonian_k, 
                     linear_destroy_op_k,      # Couples to previous mode
                     coupling_operator_next,   # Will couple to next mode (if any)
                     self.linear_coupling[idx], # Coupling strength
-                    tracked_operators={f"a_mode{idx + 1}": linear_destroy_op_k},
+                    tracked_operators=tracked_linear,
+                    store_basis=store_basis,
                 )
 
         else:
@@ -374,10 +398,12 @@ class Circuit:
             )
             collective_annihilation_operator = collective_creation_operator.conj().T
 
+            tracked_mode0 = {"a_mode0": collective_annihilation_operator} if track_operators else None
             iterator.add_initial_mode(
                 hamiltonian_0,
                 initial_coupling_op,
-                tracked_operators={"a_mode0": collective_annihilation_operator},
+                tracked_operators=tracked_mode0,
+                store_basis=store_basis,
             )
             
             # Add remaining bosonic modes (standard logic)
@@ -398,12 +424,14 @@ class Circuit:
                     coupling_operator_next = None
                 
                 # Add mode with sequential coupling
+                tracked_linear = {f"a_mode{idx + 1}": linear_destroy_op_k} if track_operators else None
                 iterator.add_mode(
                     hamiltonian_k, 
                     linear_destroy_op_k,      # Couples to previous mode
                     coupling_operator_next,   # Will couple to next mode (if any)
                     self.linear_coupling[idx], # Coupling strength
-                    tracked_operators={f"a_mode{idx + 1}": linear_destroy_op_k},
+                    tracked_operators=tracked_linear,
+                    store_basis=store_basis,
                 )
 
         # Store the diagonalizer for access to basis transformations
@@ -485,10 +513,20 @@ class Circuit:
         return np.concatenate(parts)
 
     def eigensystem_with_gradients(
-        self, truncation: int, phase_ext: Optional[float] = None
+        self,
+        truncation: int | Sequence[int],
+        phase_ext: Optional[float] = None,
+        *,
+        track_operators: bool = True,
+        store_basis: bool = True,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
         """Return eigenenergies, eigenvectors and Hellmann–Feynman gradients."""
-        energies, vectors = self.eigensystem(truncation=truncation, phase_ext=phase_ext)
+        energies, vectors = self.eigensystem(
+            truncation=truncation,
+            phase_ext=phase_ext,
+            track_operators=track_operators,
+            store_basis=store_basis,
+        )
         gradient_matrix, names = self._energy_derivative_matrix(
             phase_ext if phase_ext is not None else self.phase_ext
         )
@@ -583,44 +621,110 @@ class Circuit:
 
     @property
     def bare_modes(self) -> dict[str, np.ndarray]:
+        """Convenience wrapper for :meth:`compute_bare_modes` using the circuit instance."""
+        tridiagonal = self._build_lanczos_tridiagonal()
+        return self.compute_bare_modes(
+            tridiagonal=tridiagonal,
+            non_linear_phase_zpf=self.non_linear_phase_zpf,
+        )
+
+    def _build_lanczos_tridiagonal(self) -> np.ndarray:
+        """Construct the Lanczos tridiagonal matrix from current physical parameters."""
+        diagonal = np.concatenate(
+            (
+                np.array([self.non_linear_frequency], dtype=float),
+                np.asarray(self.linear_frequencies, dtype=float),
+            )
+        )
+        tridiagonal = np.diag(diagonal)
+        if self.linear_frequencies.size > 0:
+            off_diag = (
+                np.diag(self.linear_coupling, k=1) + np.diag(self.linear_coupling, k=-1)
+            )
+            tridiagonal = tridiagonal + off_diag
+        return tridiagonal
+
+    @staticmethod
+    def compute_bare_modes(
+        *,
+        tridiagonal: np.ndarray,
+        non_linear_phase_zpf: float,
+    ) -> dict[str, np.ndarray]:
         """
-        Reconstruct the original bare frequencies and phase ZPFs from physical parameters.
-        
-        This method creates a tridiagonal matrix from the circuit's physical parameters,
-        diagonalizes it to obtain the bare frequencies, and reconstructs the phase ZPFs.
-        
-        Returns:
-            dict: Dictionary with keys:
-                - 'frequencies': np.ndarray of bare mode frequencies (GHz)
-                - 'phase_zpf': np.ndarray of bare mode phase ZPF amplitudes (radians)
+        Recover harmonic frequencies and phase zero-point fluctuations from a Lanczos tridiagonal matrix.
+
+        Parameters
+        ----------
+        tridiagonal : np.ndarray
+            Symmetric tridiagonal matrix produced by the Lanczos transform of the harmonic sector.
+        non_linear_phase_zpf : float
+            Zero-point phase fluctuation amplitude of the collective nonlinear mode.
+
+        Returns
+        -------
+        dict
+            Dictionary with keys ``'frequencies'`` and ``'phase_zpf'`` (both ``np.ndarray``).
         """
-        n_modes = self.modes
-        
-        if n_modes == 1:
-            # Single mode case: trivial reconstruction
-            bare_frequencies = np.array([self.non_linear_frequency])
-            bare_phase_zpf = np.array([self.non_linear_phase_zpf])
-        else:
-            # Multi-mode case: create and diagonalize tridiagonal matrix
-            diagonal = np.diag([self.non_linear_frequency] + list(self.linear_frequencies), k=0)
-            off_diagonal = np.diag(self.linear_coupling, k=1) + np.diag(self.linear_coupling, k=-1)
-            tridiagonal_matrix = diagonal + off_diagonal
-            
-            bare_frequencies, eigenvectors = np.linalg.eigh(tridiagonal_matrix)
-            
-            # Use the first eigenvector (lowest frequency mode) for phase reconstruction
-            collective_eigenvector = eigenvectors[:, 0]
-            
-            # Ensure consistent sign convention (first component positive)
-            if collective_eigenvector[0] < 0:
-                collective_eigenvector *= -1
-            
-            # Scale by the phase ZPF magnitude
-            bare_phase_zpf = self.non_linear_phase_zpf * collective_eigenvector
-        
+        if tridiagonal.ndim != 2 or tridiagonal.shape[0] != tridiagonal.shape[1]:
+            raise ValueError("tridiagonal must be a square matrix.")
+        if non_linear_phase_zpf <= 0:
+            raise ValueError("non_linear_phase_zpf must be positive.")
+
+        bare_frequencies, eigenvectors = np.linalg.eigh(tridiagonal)
+
+        # First mode corresponds to the collective nonlinear mode (lowest frequency)
+        collective_eigenvector = eigenvectors[:, 0]
+        if collective_eigenvector[0] < 0:
+            collective_eigenvector *= -1
+
+        bare_phase_zpf = non_linear_phase_zpf * collective_eigenvector
+
         return {
-            'frequencies': bare_frequencies,
-            'phase_zpf': bare_phase_zpf
+            "frequencies": bare_frequencies,
+            "phase_zpf": bare_phase_zpf,
+        }
+
+    def harmonic_modes(self) -> dict[str, np.ndarray]:
+        """Return cached harmonic data if the circuit was created from harmonic modes."""
+        if self._harmonic_modes_store is None:
+            raise AttributeError(
+                "Harmonic mode data not available for this circuit instance."
+            )
+        return {
+            "frequencies": self._harmonic_modes_store["frequencies"].copy(),
+            "phase_zpf": self._harmonic_modes_store["phase_zpf"].copy(),
+        }
+
+    @property
+    def frequencies(self) -> np.ndarray:
+        """Return harmonic frequencies, deriving them if not explicitly stored."""
+        if self._harmonic_modes_store is not None:
+            return self._harmonic_modes_store["frequencies"].copy()
+        return self.bare_modes["frequencies"].copy()
+
+    @property
+    def phase_zpf(self) -> np.ndarray:
+        """Return harmonic phase ZPF amplitudes."""
+        if self._harmonic_modes_store is not None:
+            return self._harmonic_modes_store["phase_zpf"].copy()
+        return self.bare_modes["phase_zpf"].copy()
+
+    def _store_harmonic_modes(
+        self,
+        frequencies: Sequence[float],
+        phase_zpf: Sequence[float],
+    ) -> None:
+        freq_array = np.asarray(frequencies, dtype=float)
+        phase_array = np.asarray(phase_zpf, dtype=float)
+        if freq_array.shape != phase_array.shape:
+            raise ValueError("frequencies and phase_zpf must have matching shapes.")
+        if freq_array.size != self.modes:
+            raise ValueError(
+                "Number of harmonic modes must equal the circuit mode count."
+            )
+        self._harmonic_modes_store = {
+            "frequencies": freq_array.copy(),
+            "phase_zpf": phase_array.copy(),
         }
 
     # def _non_collective_eigsystem(self) -> np.ndarray:

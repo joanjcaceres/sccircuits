@@ -70,15 +70,16 @@ transitions = {
 # Create fitter
 fitter = CircuitFitter(
     Ej_initial=1.0,
-    frequencies_initial=[5.0, 6.0],
-    phase_zpf_initial=[0.1, 0.2],
-    dimensions=[50, 10],
-    transitions=transitions
+    non_linear_frequency_initial=5.0,
+    non_linear_phase_zpf_initial=0.1,
+    dimensions=[50],
+    transitions=transitions,
 )
 
 # Fit parameters
 result = fitter.fit(verbose=1)
-fitter.print_analysis_summary()
+stats = fitter.get_fit_statistics()
+print(f"Reduced chi²: {stats['reduced_chi_square']:.3f}")
 ```
 
 ### Black Box Quantization
@@ -182,7 +183,7 @@ The package includes comprehensive examples in the source code. Each major class
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Citation
+<!-- ## Citation
 
 If you use this package in your research, please cite:
 
@@ -194,10 +195,10 @@ If you use this package in your research, please cite:
   version = {0.1.0},
   year = {2024}
 }
-```
+``` -->
 
 ## Contact
 
-Joan Caceres - joanjcaceres@example.com
+Joan Caceres - contact@joanjcaceres.com
 
 Project Link: [https://github.com/joanjcaceres/sccircuits](https://github.com/joanjcaceres/sccircuits)
