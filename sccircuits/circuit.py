@@ -155,7 +155,8 @@ class Circuit:
             raise ValueError("All mode dimensions must be positive integers.")
 
         self.modes = len(self.dimensions)
-        expected_linear_modes = self.modes - 1
+        self.linear_mode_count = self.modes - 1
+        expected_linear_modes = self.linear_mode_count
 
         if expected_linear_modes == 0:
             linear_frequencies_array = np.array([], dtype=float)
@@ -193,6 +194,7 @@ class Circuit:
         self._lanczos_basis: Optional[np.ndarray] = None
         self._lanczos_tridiagonal: Optional[np.ndarray] = None
         self._lanczos_status: Optional[dict] = None
+        self._harmonic_modes_store: Optional[dict[str, np.ndarray]] = None
 
     @classmethod
     def from_harmonic_modes(
@@ -231,6 +233,7 @@ class Circuit:
         circuit._lanczos_basis = params["basis"]
         circuit._lanczos_tridiagonal = params["tridiagonal"]
         circuit._lanczos_status = params["status"]
+        circuit._store_harmonic_modes(frequencies, phase_zpf)
 
         return circuit
 
@@ -604,11 +607,17 @@ class Circuit:
 
     def _build_lanczos_tridiagonal(self) -> np.ndarray:
         """Construct the Lanczos tridiagonal matrix from current physical parameters."""
-        diagonal = [self.non_linear_frequency]
-        diagonal.extend(self.linear_frequencies.tolist())
+        diagonal = np.concatenate(
+            (
+                np.array([self.non_linear_frequency], dtype=float),
+                np.asarray(self.linear_frequencies, dtype=float),
+            )
+        )
         tridiagonal = np.diag(diagonal)
-        if self.linear_mode_count > 0:
-            off_diag = np.diag(self.linear_coupling, k=1) + np.diag(self.linear_coupling, k=-1)
+        if self.linear_frequencies.size > 0:
+            off_diag = (
+                np.diag(self.linear_coupling, k=1) + np.diag(self.linear_coupling, k=-1)
+            )
             tridiagonal = tridiagonal + off_diag
         return tridiagonal
 
@@ -650,6 +659,49 @@ class Circuit:
         return {
             "frequencies": bare_frequencies,
             "phase_zpf": bare_phase_zpf,
+        }
+
+    def harmonic_modes(self) -> dict[str, np.ndarray]:
+        """Return cached harmonic data if the circuit was created from harmonic modes."""
+        if self._harmonic_modes_store is None:
+            raise AttributeError(
+                "Harmonic mode data not available for this circuit instance."
+            )
+        return {
+            "frequencies": self._harmonic_modes_store["frequencies"].copy(),
+            "phase_zpf": self._harmonic_modes_store["phase_zpf"].copy(),
+        }
+
+    @property
+    def frequencies(self) -> np.ndarray:
+        """Return harmonic frequencies, deriving them if not explicitly stored."""
+        if self._harmonic_modes_store is not None:
+            return self._harmonic_modes_store["frequencies"].copy()
+        return self.bare_modes["frequencies"].copy()
+
+    @property
+    def phase_zpf(self) -> np.ndarray:
+        """Return harmonic phase ZPF amplitudes."""
+        if self._harmonic_modes_store is not None:
+            return self._harmonic_modes_store["phase_zpf"].copy()
+        return self.bare_modes["phase_zpf"].copy()
+
+    def _store_harmonic_modes(
+        self,
+        frequencies: Sequence[float],
+        phase_zpf: Sequence[float],
+    ) -> None:
+        freq_array = np.asarray(frequencies, dtype=float)
+        phase_array = np.asarray(phase_zpf, dtype=float)
+        if freq_array.shape != phase_array.shape:
+            raise ValueError("frequencies and phase_zpf must have matching shapes.")
+        if freq_array.size != self.modes:
+            raise ValueError(
+                "Number of harmonic modes must equal the circuit mode count."
+            )
+        self._harmonic_modes_store = {
+            "frequencies": freq_array.copy(),
+            "phase_zpf": phase_array.copy(),
         }
 
     # def _non_collective_eigsystem(self) -> np.ndarray:
