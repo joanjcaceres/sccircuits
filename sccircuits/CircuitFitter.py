@@ -205,17 +205,31 @@ class CircuitFitter:
             _Gamma,
         ) = self._unpack_parameter_vector(params)
 
-        columns = []
         dEdEj = gradients[:, name_to_index["Ej"]]
+        grad_non_linear_freq = gradients[:, name_to_index["non_linear_frequency"]]
+        grad_non_linear_phase = gradients[:, name_to_index["non_linear_phase_zpf"]]
+
+        columns: list[np.ndarray] = []
+
         if self.use_bogoliubov:
             k = params[0]
             dEj_dk = self._dEj_dk(k, non_linear_frequency, non_linear_phase_zpf)
             columns.append(dEdEj * dEj_dk)
+
+            Ej_max = self._Ej_max(non_linear_frequency, non_linear_phase_zpf)
+            if Ej_max <= 0:
+                raise ValueError("Encountered non-positive Ej_max during Jacobian evaluation.")
+            sigmoid = Ej / Ej_max  # equals 1 / (1 + exp(-k))
+
+            dEj_domega = sigmoid / (2.0 * non_linear_phase_zpf**2)
+            dEj_dphi = -sigmoid * (non_linear_frequency / (non_linear_phase_zpf**3))
+
+            columns.append(grad_non_linear_freq + dEdEj * dEj_domega)
+            columns.append(grad_non_linear_phase + dEdEj * dEj_dphi)
         else:
             columns.append(dEdEj)
-
-        columns.append(gradients[:, name_to_index["non_linear_frequency"]])
-        columns.append(gradients[:, name_to_index["non_linear_phase_zpf"]])
+            columns.append(grad_non_linear_freq)
+            columns.append(grad_non_linear_phase)
 
         if self.fit_Ej_second:
             ej_second_idx = name_to_index.get("Ej_second")
