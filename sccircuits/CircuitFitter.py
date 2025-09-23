@@ -36,6 +36,7 @@ class CircuitFitter:
         optimizer: str = "least_squares",
         use_bogoliubov: bool = True,
         fit_Ej_second: bool = False,
+        enable_jacobian: bool = False,
     ) -> None:
         self.dimensions = [int(dim) for dim in dimensions]
         if not self.dimensions:
@@ -49,6 +50,7 @@ class CircuitFitter:
         self.truncation = truncation
         self.optimizer = optimizer
         self.use_bogoliubov = use_bogoliubov
+        self.enable_jacobian = enable_jacobian
 
         self.Ej_initial = float(Ej_initial)
         self.Ej_lower_bound = float(Ej_lower_bound)
@@ -155,9 +157,9 @@ class CircuitFitter:
         self.params_initial = self._build_initial_parameter_vector()
         self.bounds = self._build_bounds()
 
-        jacobian_callable = (
-            None #if self.has_fermionic_coupling else self.eigenvalues_jacobian
-        )
+        jacobian_callable = None
+        if self.enable_jacobian and not self.has_fermionic_coupling:
+            jacobian_callable = self.eigenvalues_jacobian
 
         self.transition_fitter = TransitionFitter(
             model_func=self.eigenvalues_function,
@@ -184,14 +186,24 @@ class CircuitFitter:
 
     def eigenvalues_function(self, phase_ext: float, params: Sequence[float]) -> np.ndarray:
         circuit = self._circuit_from_params(phase_ext, params)
-        eigenvalues, _ = circuit.eigensystem(truncation=self.truncation, phase_ext=phase_ext)
+        eigenvalues, _ = circuit.eigensystem(
+            truncation=self.truncation,
+            phase_ext=phase_ext,
+            track_operators=self.enable_jacobian,
+            store_basis=self.enable_jacobian,
+        )
         return eigenvalues
 
     def eigenvalues_jacobian(self, phase_ext: float, params: Sequence[float]) -> np.ndarray:
+        if not self.enable_jacobian:
+            raise RuntimeError("Jacobian evaluation requested but enable_jacobian=False.")
+
         circuit = self._circuit_from_params(phase_ext, params)
         _, _, gradients, names = circuit.eigensystem_with_gradients(
             truncation=self.truncation,
             phase_ext=phase_ext,
+            track_operators=True,
+            store_basis=True,
         )
 
         name_to_index = {name: idx for idx, name in enumerate(names)}

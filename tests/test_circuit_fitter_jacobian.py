@@ -46,6 +46,7 @@ def test_circuit_fitter_analytic_jacobian_matches_finite_difference():
         use_bogoliubov=False,
         truncation=[20, 40, 40, 40, 60],
         fit_Ej_second=False,
+        enable_jacobian=True,
     )
 
     params = fitter.params_initial

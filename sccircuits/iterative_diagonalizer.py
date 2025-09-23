@@ -67,6 +67,7 @@ class IterativeHamiltonianDiagonalizer:
         hamiltonian: np.ndarray,
         coupling_operator: np.ndarray = None,
         tracked_operators: Optional[Dict[str, np.ndarray]] = None,
+        store_basis: bool = False,
     ) -> None:
         """
         Diagonalize the first-mode Hamiltonian and optionally store its coupling operator.
@@ -77,9 +78,11 @@ class IterativeHamiltonianDiagonalizer:
                                                      shape (d0, d0). Can be None if this is the last mode.
             tracked_operators (dict[str, np.ndarray], optional): Operators defined on this mode that
                                                                  should be tracked in the truncated basis.
+            store_basis (bool): Whether to retain the basis transformation matrix for
+                               this mode.
         """
         self._current_mode = 0
-        
+
         # Adapt truncation to actual system size
         h0_size = hamiltonian.shape[0]
         effective_truncation = self._effective_truncation(0, h0_size)
@@ -87,8 +90,9 @@ class IterativeHamiltonianDiagonalizer:
         self.energies = evals
         self.basis_vectors = evecs
 
-        # Store the basis transformation matrix for this mode
-        self._mode_basis_transformations[self._current_mode] = evecs.copy()
+        # Store the basis transformation matrix for this mode if requested
+        if store_basis:
+            self._mode_basis_transformations[self._current_mode] = evecs.copy()
 
         # Store the coupling operator for this mode (if provided)
         if coupling_operator is not None:
@@ -116,6 +120,7 @@ class IterativeHamiltonianDiagonalizer:
         coupling_operator_next: np.ndarray = None,
         coupling_strength: float = 1.0,
         tracked_operators: Optional[Dict[str, np.ndarray]] = None,
+        store_basis: bool = False,
     ) -> None:
         """
         Add a new mode with sequential coupling: each mode couples only to the next mode.
@@ -128,6 +133,8 @@ class IterativeHamiltonianDiagonalizer:
                                                    shape (dk, dk). Can be None if this is the last mode.
             coupling_strength            (float): Strength g_k of the coupling term between previous and current mode.
             tracked_operators (dict[str, np.ndarray], optional): Operators defined on the new mode to be tracked.
+            store_basis (bool): Whether to retain the basis transformation matrix for
+                               the updated system.
         """
         self._current_mode += 1
         previous_dimension = len(self.energies)  # Use actual effective dimension from previous step
@@ -162,8 +169,9 @@ class IterativeHamiltonianDiagonalizer:
         self.energies = evals
         self.basis_vectors = evecs
 
-        # Store the basis transformation matrix for this mode
-        self._mode_basis_transformations[self._current_mode] = evecs.copy()
+        # Store the basis transformation matrix for this mode if requested
+        if store_basis:
+            self._mode_basis_transformations[self._current_mode] = evecs.copy()
 
         # Store the coupling operator for the NEXT iteration (if provided)
         if coupling_operator_next is not None:
@@ -269,7 +277,9 @@ class IterativeHamiltonianDiagonalizer:
             dict[int, np.ndarray]: Dictionary mapping mode indices to their transformation matrices.
                                   Each matrix is an independent copy, not a reference.
         """
-        return {mode_idx: matrix.copy() for mode_idx, matrix in self._mode_basis_transformations.items()}
+        return {
+            mode_idx: matrix.copy() for mode_idx, matrix in self._mode_basis_transformations.items()
+        }
 
     def get_tracked_operators(self) -> dict[str, np.ndarray]:
         """

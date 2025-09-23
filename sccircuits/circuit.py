@@ -302,6 +302,9 @@ class Circuit:
         self,
         truncation: "int | Sequence[int]",
         phase_ext: Optional[float] = None,
+        *,
+        track_operators: bool = False,
+        store_basis: bool = False,
     ):
         """
         Calculate the eigenvalues and eigenvectors of the total Circuit Hamiltonian
@@ -328,10 +331,12 @@ class Circuit:
             fermionic_creation_op = np.array([[0, 0], [1, 0]], dtype=float)
             fermionic_annihilation_op = fermionic_creation_op.T.conj()
             
+            tracked_fermion = {"a_fermion": fermionic_annihilation_op} if track_operators else None
             iterator.add_initial_mode(
                 H_fermion,
                 fermionic_creation_op,  # Couples to bosonic mode
-                tracked_operators={"a_fermion": fermionic_annihilation_op},
+                tracked_operators=tracked_fermion,
+                store_basis=store_basis,
             )
             
             # Step 2: Add bosonic non-linear mode (coupled to fermion)
@@ -343,12 +348,14 @@ class Circuit:
                 collective_creation_operator if self.modes > 1 else None
             )
             
+            tracked_mode0 = {"a_mode0": collective_annihilation_operator} if track_operators else None
             iterator.add_mode(
                 hamiltonian_nl,
                 cos_half_op,           # Couples to fermionic c†  
                 next_coupling_op,      # For next bosonic coupling
                 self.Gamma,            # Coupling strength
-                tracked_operators={"a_mode0": collective_annihilation_operator},
+                tracked_operators=tracked_mode0,
+                store_basis=store_basis,
             )
             
             # Step 3: Add remaining bosonic modes
@@ -369,12 +376,14 @@ class Circuit:
                     coupling_operator_next = None
                 
                 # Add mode with sequential coupling
+                tracked_linear = {f"a_mode{idx + 1}": linear_destroy_op_k} if track_operators else None
                 iterator.add_mode(
                     hamiltonian_k, 
                     linear_destroy_op_k,      # Couples to previous mode
                     coupling_operator_next,   # Will couple to next mode (if any)
                     self.linear_coupling[idx], # Coupling strength
-                    tracked_operators={f"a_mode{idx + 1}": linear_destroy_op_k},
+                    tracked_operators=tracked_linear,
+                    store_basis=store_basis,
                 )
 
         else:
@@ -389,10 +398,12 @@ class Circuit:
             )
             collective_annihilation_operator = collective_creation_operator.conj().T
 
+            tracked_mode0 = {"a_mode0": collective_annihilation_operator} if track_operators else None
             iterator.add_initial_mode(
                 hamiltonian_0,
                 initial_coupling_op,
-                tracked_operators={"a_mode0": collective_annihilation_operator},
+                tracked_operators=tracked_mode0,
+                store_basis=store_basis,
             )
             
             # Add remaining bosonic modes (standard logic)
@@ -413,12 +424,14 @@ class Circuit:
                     coupling_operator_next = None
                 
                 # Add mode with sequential coupling
+                tracked_linear = {f"a_mode{idx + 1}": linear_destroy_op_k} if track_operators else None
                 iterator.add_mode(
                     hamiltonian_k, 
                     linear_destroy_op_k,      # Couples to previous mode
                     coupling_operator_next,   # Will couple to next mode (if any)
                     self.linear_coupling[idx], # Coupling strength
-                    tracked_operators={f"a_mode{idx + 1}": linear_destroy_op_k},
+                    tracked_operators=tracked_linear,
+                    store_basis=store_basis,
                 )
 
         # Store the diagonalizer for access to basis transformations
@@ -500,10 +513,20 @@ class Circuit:
         return np.concatenate(parts)
 
     def eigensystem_with_gradients(
-        self, truncation: int, phase_ext: Optional[float] = None
+        self,
+        truncation: "int | Sequence[int]",
+        phase_ext: Optional[float] = None,
+        *,
+        track_operators: bool = True,
+        store_basis: bool = True,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
         """Return eigenenergies, eigenvectors and Hellmann–Feynman gradients."""
-        energies, vectors = self.eigensystem(truncation=truncation, phase_ext=phase_ext)
+        energies, vectors = self.eigensystem(
+            truncation=truncation,
+            phase_ext=phase_ext,
+            track_operators=track_operators,
+            store_basis=store_basis,
+        )
         gradient_matrix, names = self._energy_derivative_matrix(
             phase_ext if phase_ext is not None else self.phase_ext
         )
