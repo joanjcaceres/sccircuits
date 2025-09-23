@@ -300,7 +300,7 @@ class Circuit:
     
     def eigensystem(
         self,
-        truncation: "int | Sequence[int]",
+        truncation: int | Sequence[int],
         phase_ext: Optional[float] = None,
         *,
         track_operators: bool = False,
