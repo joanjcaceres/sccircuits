@@ -160,7 +160,7 @@ class Circuit:
         if return_coupling_ops:
             # Calculate cos_half_op only when fermionic coupling is enabled
             if self.has_fermionic_coupling:
-                cos_half_op = cosm(gauge_invariant_phase_op / 2)  # For fermionic coupling (no phase_ext)
+                cos_half_op = cosm(gauge_invariant_phase_op / 2)  # For fermionic coupling (includes phase_ext)
             else:
                 cos_half_op = None  # Not needed for purely bosonic systems
             
