@@ -1,647 +1,531 @@
-import csv
-
 import numpy as np
-from .circuit import Circuit
+from typing import Dict, Optional, Sequence, Tuple, Union
 
-from .transition_fitter import TransitionFitter
+from .circuit import Circuit
+from .transition_fitter import DataPoint, TransitionFitter
+
+TransitionKey = Tuple[int, int]
+TransitionDatum = Union[DataPoint, Tuple[float, float], Tuple[float, float, float]]
+TransitionData = Dict[TransitionKey, Sequence[TransitionDatum]]
 
 
 class CircuitFitter:
+    """Fit superconducting circuit parameters against transition spectroscopy data."""
+
     def __init__(
         self,
         Ej_initial: float,
-        frequencies_initial: list[float],
-        phase_zpf_initial: list[float],
-        dimensions: list[int],
-        transitions: dict[tuple[int, int], list[tuple[float, float]]],
+        non_linear_frequency_initial: float,
+        non_linear_phase_zpf_initial: float,
+        dimensions: Sequence[int],
+        transitions: TransitionData,
+        linear_frequencies_initial: Optional[Sequence[float]] = None,
+        linear_couplings_initial: Optional[Sequence[float]] = None,
+        Ej_second_initial: Optional[float] = None,
         Ej_lower_bound: float = 0.0,
-        frequencies_bounds: list[tuple[float, float]] = None,
-        phase_zpf_bounds: list[tuple[float, float]] = None,
-        epsilon_r_initial: float = None,
-        Gamma_initial: float = None,
-        epsilon_r_bounds: tuple[float, float] = None,
-        Gamma_bounds: tuple[float, float] = None,
-        truncation: int = 40,
-        x_scale: float = 2 * np.pi,
+        non_linear_frequency_bounds: Optional[Tuple[float, float]] = None,
+        non_linear_phase_zpf_bounds: Optional[Tuple[float, float]] = None,
+        linear_frequencies_bounds: Optional[Sequence[Tuple[float, float]]] = None,
+        linear_couplings_bounds: Optional[Sequence[Tuple[float, float]]] = None,
+        epsilon_r_initial: Optional[float] = None,
+        Gamma_initial: Optional[float] = None,
+        epsilon_r_bounds: Optional[Tuple[float, float]] = None,
+        Gamma_bounds: Optional[Tuple[float, float]] = None,
+        Ej_second_bounds: Optional[Tuple[float, float]] = None,
+        truncation: Union[int, Sequence[int]] = 40,
         optimizer: str = "least_squares",
         use_bogoliubov: bool = True,
-    ):
-        if len(frequencies_initial) != len(phase_zpf_initial) or len(
-            frequencies_initial
-        ) != len(dimensions):
-            raise ValueError(
-                    f"Frequencies, phase_zpf, and dimensions must have the same length. "
-                    f"But got {len(frequencies_initial)}, {len(phase_zpf_initial)}, and {len(dimensions)}."
+        fit_Ej_second: bool = False,
+        enable_jacobian: bool = False,
+    ) -> None:
+        self.dimensions = [int(dim) for dim in dimensions]
+        if not self.dimensions:
+            raise ValueError("At least one Hilbert-space dimension must be provided.")
+        if any(dim <= 0 for dim in self.dimensions):
+            raise ValueError("All Hilbert-space dimensions must be positive integers.")
 
-            )
-            
-        # Validate fermionic coupling parameters
-        self.has_fermionic_coupling = (epsilon_r_initial is not None and Gamma_initial is not None)
-        if (epsilon_r_initial is None and Gamma_initial is not None) or (epsilon_r_initial is not None and Gamma_initial is None):
-            raise ValueError("Both epsilon_r_initial and Gamma_initial must be provided together for fermionic coupling, or both should be None.")
-        
-        self.modes = len(frequencies_initial)
-        self.Ej_initial = Ej_initial
-        self.frequencies_initial = np.asarray(frequencies_initial)
-        self.phase_zpf_initial = np.asarray(phase_zpf_initial)
-        self.dimensions = dimensions
+        self.modes = len(self.dimensions)
+        self.linear_mode_count = max(self.modes - 1, 0)
+
         self.truncation = truncation
-        self.Ej_lower_bound = Ej_lower_bound
-        self.frequencies_bounds = frequencies_bounds
-        self.phase_zpf_bounds = phase_zpf_bounds
-        
-        # Store fermionic coupling parameters
-        self.epsilon_r_initial = epsilon_r_initial
-        self.Gamma_initial = Gamma_initial
-        self.epsilon_r_bounds = epsilon_r_bounds
-        self.Gamma_bounds = Gamma_bounds
-        
-        self.x_scale = x_scale
+        self.optimizer = optimizer
         self.use_bogoliubov = use_bogoliubov
+        self.enable_jacobian = enable_jacobian
 
-        self.params_initial = self._params_initial()
+        self.Ej_initial = float(Ej_initial)
+        self.Ej_lower_bound = float(Ej_lower_bound)
+
+        self.non_linear_frequency_initial = float(non_linear_frequency_initial)
+        if self.non_linear_frequency_initial <= 0:
+            raise ValueError("non_linear_frequency_initial must be positive.")
+
+        self.non_linear_phase_zpf_initial = float(non_linear_phase_zpf_initial)
+        if self.non_linear_phase_zpf_initial <= 0:
+            raise ValueError("non_linear_phase_zpf_initial must be positive.")
+
+        self.fit_Ej_second = bool(fit_Ej_second)
+        if self.fit_Ej_second:
+            if Ej_second_initial is None:
+                raise ValueError(
+                    "Ej_second_initial must be provided when fit_Ej_second=True."
+                )
+            self.Ej_second_initial = float(Ej_second_initial)
+            self.Ej_second_value = self.Ej_second_initial
+        else:
+            if Ej_second_bounds is not None:
+                raise ValueError(
+                    "Ej_second_bounds cannot be provided when fit_Ej_second=False."
+                )
+            self.Ej_second_initial = None
+            self.Ej_second_value = (
+                float(Ej_second_initial) if Ej_second_initial is not None else 0.0
+            )
+
+        if linear_frequencies_initial is None:
+            linear_frequencies_initial = []
+        if linear_couplings_initial is None:
+            linear_couplings_initial = []
+
+        self.linear_frequencies_initial = np.asarray(linear_frequencies_initial, dtype=float)
+        self.linear_couplings_initial = np.asarray(linear_couplings_initial, dtype=float)
+
+        if self.linear_mode_count == 0:
+            if self.linear_frequencies_initial.size or self.linear_couplings_initial.size:
+                raise ValueError(
+                    "No linear modes expected; do not supply linear_frequencies_initial or linear_couplings_initial."
+                )
+            self.linear_frequencies_initial = np.array([], dtype=float)
+            self.linear_couplings_initial = np.array([], dtype=float)
+        else:
+            expected = self.linear_mode_count
+            if (
+                self.linear_frequencies_initial.size != expected
+                or self.linear_couplings_initial.size != expected
+            ):
+                raise ValueError(
+                    "linear_frequencies_initial and linear_couplings_initial must both have length len(dimensions) - 1."
+                )
+            if np.any(self.linear_frequencies_initial <= 0):
+                raise ValueError("All linear_frequencies_initial must be positive.")
+            if np.any(self.linear_couplings_initial < 0):
+                raise ValueError("All linear_couplings_initial must be non-negative.")
+
+        self.non_linear_frequency_bounds = (
+            tuple(non_linear_frequency_bounds)
+            if non_linear_frequency_bounds is not None
+            else None
+        )
+        self.non_linear_phase_zpf_bounds = (
+            tuple(non_linear_phase_zpf_bounds)
+            if non_linear_phase_zpf_bounds is not None
+            else None
+        )
+
+        if linear_frequencies_bounds is not None:
+            if len(linear_frequencies_bounds) != self.linear_mode_count:
+                raise ValueError(
+                    "linear_frequencies_bounds must have length len(dimensions) - 1 when provided."
+                )
+            self.linear_frequencies_bounds = [tuple(b) for b in linear_frequencies_bounds]
+        else:
+            self.linear_frequencies_bounds = None
+
+        if linear_couplings_bounds is not None:
+            if len(linear_couplings_bounds) != self.linear_mode_count:
+                raise ValueError(
+                    "linear_couplings_bounds must have length len(dimensions) - 1 when provided."
+                )
+            self.linear_couplings_bounds = [tuple(b) for b in linear_couplings_bounds]
+        else:
+            self.linear_couplings_bounds = None
+
+        self.epsilon_r_bounds = (
+            tuple(epsilon_r_bounds) if epsilon_r_bounds is not None else None
+        )
+        self.Gamma_bounds = tuple(Gamma_bounds) if Gamma_bounds is not None else None
+        self.Ej_second_bounds = (
+            tuple(Ej_second_bounds) if Ej_second_bounds is not None else None
+        ) if self.fit_Ej_second else None
+
+        self.has_fermionic_coupling = (epsilon_r_initial is not None and Gamma_initial is not None)
+        if (epsilon_r_initial is None) ^ (Gamma_initial is None):
+            raise ValueError("Both epsilon_r_initial and Gamma_initial must be provided together, or neither.")
+
+        self.epsilon_r_initial = None if epsilon_r_initial is None else float(epsilon_r_initial)
+        self.Gamma_initial = None if Gamma_initial is None else float(Gamma_initial)
+
+        self.params_initial = self._build_initial_parameter_vector()
+        self.bounds = self._build_bounds()
+
+        jacobian_callable = None
+        if self.enable_jacobian and not self.has_fermionic_coupling:
+            jacobian_callable = self.eigenvalues_jacobian
 
         self.transition_fitter = TransitionFitter(
             model_func=self.eigenvalues_function,
             data=transitions,
-            params_initial=self.params_initial,
             returns_eigenvalues=True,
-            optimizer=optimizer,
+            jacobian_func=jacobian_callable,
         )
 
-        self.bounds = self._bounds()
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def fit(self, verbose: int = 1, **kwargs):
+        if self.optimizer != "least_squares":
+            raise NotImplementedError("Currently only 'least_squares' optimizer is supported.")
+        return self.transition_fitter.fit(
+            params_initial=self.params_initial,
+            bounds=self.bounds,
+            verbose=verbose,
+            **kwargs,
+        )
 
-    def _bounds(self):
-        if self.use_bogoliubov:
-            # Use k parameterization with sigmoid mapping to Ej
-            lower_bounds = [self._Ej_to_k(self.Ej_lower_bound)]
-        else:
-            # Use direct Ej parameterization
-            lower_bounds = [self.Ej_lower_bound]
+    def fit_multistart(self, *args, **kwargs):
+        return self.transition_fitter.fit_multistart(*args, **kwargs)
 
-        upper_bounds = [np.inf]
-
-        if self.frequencies_bounds is None:
-            lower_bounds.extend([0.0] * self.modes)
-            upper_bounds.extend([np.inf] * self.modes)
-        else:
-            lower_bounds.extend([b[0] for b in self.frequencies_bounds])
-            upper_bounds.extend([b[1] for b in self.frequencies_bounds])
-        if self.phase_zpf_bounds is None:
-            lower_bounds.extend([0.0] * self.modes)
-            upper_bounds.extend([np.inf] * self.modes)
-        else:
-            lower_bounds.extend([b[0] for b in self.phase_zpf_bounds])
-            upper_bounds.extend([b[1] for b in self.phase_zpf_bounds])
-
-        # Add fermionic coupling parameter bounds if enabled
-        if self.has_fermionic_coupling:
-            # epsilon_r bounds
-            if self.epsilon_r_bounds is None:
-                lower_bounds.append(0.0)  # epsilon_r should be positive
-                upper_bounds.append(np.inf)
-            else:
-                lower_bounds.append(self.epsilon_r_bounds[0])
-                upper_bounds.append(self.epsilon_r_bounds[1])
-            
-            # Gamma bounds  
-            if self.Gamma_bounds is None:
-                lower_bounds.append(0.0)  # Gamma should be positive
-                upper_bounds.append(np.inf)
-            else:
-                lower_bounds.append(self.Gamma_bounds[0])
-                upper_bounds.append(self.Gamma_bounds[1])
-
-        return np.array([lower_bounds, upper_bounds])
-
-    def fit(self, verbose=1):  # Adapt for DE.
-        return self.transition_fitter.fit(bounds=self.bounds, verbose=verbose)
-
-    def eigenvalues_function(self, phase_ext, params):
-        phase_ext *= self.x_scale
-        Ej, frequencies, phase_zpf, epsilon_r, Gamma = self._convert_params_to_lists(params)
-
-        circuit = Circuit(
-            frequencies=frequencies,
-            phase_zpf=phase_zpf,
-            dimensions=self.dimensions,
-            Ej=Ej,
-            Gamma=Gamma,
-            epsilon_r=epsilon_r,
+    def eigenvalues_function(self, phase_ext: float, params: Sequence[float]) -> np.ndarray:
+        circuit = self._circuit_from_params(phase_ext, params)
+        eigenvalues, _ = circuit.eigensystem(
+            truncation=self.truncation,
             phase_ext=phase_ext,
-            use_bogoliubov=self.use_bogoliubov,
+            track_operators=self.enable_jacobian,
+            store_basis=self.enable_jacobian,
+        )
+        return eigenvalues
+
+    def eigenvalues_jacobian(self, phase_ext: float, params: Sequence[float]) -> np.ndarray:
+        if not self.enable_jacobian:
+            raise RuntimeError("Jacobian evaluation requested but enable_jacobian=False.")
+
+        circuit = self._circuit_from_params(phase_ext, params)
+        _, _, gradients, names = circuit.eigensystem_with_gradients(
+            truncation=self.truncation,
+            phase_ext=phase_ext,
+            track_operators=True,
+            store_basis=True,
         )
 
-        evals, _ = circuit.eigensystem(truncation=self.truncation, phase_ext=phase_ext)
-        return evals
+        name_to_index = {name: idx for idx, name in enumerate(names)}
 
-    def _params_initial(self):
-        if self.use_bogoliubov:
-            # Use k parameterization
-            first_param = self._Ej_to_k(self.Ej_initial)
-        else:
-            # Use direct Ej parameterization
-            first_param = self.Ej_initial
+        (
+            Ej,
+            non_linear_frequency,
+            non_linear_phase_zpf,
+            _Ej_second,
+            _linear_frequencies,
+            _linear_couplings,
+            _epsilon_r,
+            _Gamma,
+        ) = self._unpack_parameter_vector(params)
 
-        params = [
-            first_param,
-            *self.frequencies_initial,
-            *self.phase_zpf_initial,
-        ]
-        
-        # Add fermionic coupling parameters if enabled
-        if self.has_fermionic_coupling:
-            params.extend([self.epsilon_r_initial, self.Gamma_initial])
-        
-        return params
+        dEdEj = gradients[:, name_to_index["Ej"]]
+        grad_non_linear_freq = gradients[:, name_to_index["non_linear_frequency"]]
+        grad_non_linear_phase = gradients[:, name_to_index["non_linear_phase_zpf"]]
 
-    def _k_to_Ej(self, k, frequencies, phase_zpf):
-        frequencies = np.array(frequencies)
-        phase_zpf = np.array(phase_zpf)
-        phi_zpf_rms = np.sqrt(np.sum(phase_zpf**2))
-        collective_frequency = np.sum(frequencies * phase_zpf**2) / phi_zpf_rms**2
-        Ej_max = collective_frequency / (2 * phi_zpf_rms**2)
-        sigmoid = 1 / (1 + np.exp(-k))
-        Ej = Ej_max * sigmoid
-        return Ej
-
-    def _convert_params_to_lists(self, params):
-        frequencies = np.array(params[1 : 1 + self.modes])
-        phase_zpf = np.array(params[1 + self.modes : 1 + 2 * self.modes])
+        columns: list[np.ndarray] = []
 
         if self.use_bogoliubov:
-            # Convert k to Ej using sigmoid mapping
-            Ej = self._k_to_Ej(params[0], frequencies, phase_zpf)
+            k = params[0]
+            dEj_dk = self._dEj_dk(k, non_linear_frequency, non_linear_phase_zpf)
+            columns.append(dEdEj * dEj_dk)
+
+            Ej_max = self._Ej_max(non_linear_frequency, non_linear_phase_zpf)
+            if Ej_max <= 0:
+                raise ValueError("Encountered non-positive Ej_max during Jacobian evaluation.")
+            sigmoid = Ej / Ej_max  # equals 1 / (1 + exp(-k))
+
+            dEj_domega = sigmoid / (2.0 * non_linear_phase_zpf**2)
+            dEj_dphi = -sigmoid * (non_linear_frequency / (non_linear_phase_zpf**3))
+
+            columns.append(grad_non_linear_freq + dEdEj * dEj_domega)
+            columns.append(grad_non_linear_phase + dEdEj * dEj_dphi)
         else:
-            # Use direct Ej parameterization
-            Ej = params[0]
+            columns.append(dEdEj)
+            columns.append(grad_non_linear_freq)
+            columns.append(grad_non_linear_phase)
 
-        # Extract fermionic coupling parameters if enabled
-        if self.has_fermionic_coupling:
-            epsilon_r = params[1 + 2 * self.modes]
-            Gamma = params[1 + 2 * self.modes + 1]
-        else:
-            epsilon_r = None
-            Gamma = None
+        if self.fit_Ej_second:
+            ej_second_idx = name_to_index.get("Ej_second")
+            if ej_second_idx is None:
+                raise KeyError("Gradient for Ej_second not found in circuit Jacobian output.")
+            columns.append(gradients[:, ej_second_idx])
 
-        return Ej, frequencies, phase_zpf, epsilon_r, Gamma
+        for idx in range(self.linear_mode_count):
+            name = f"linear_frequency_{idx}"
+            columns.append(gradients[:, name_to_index[name]])
+        for idx in range(self.linear_mode_count):
+            name = f"linear_coupling_{idx}"
+            columns.append(gradients[:, name_to_index[name]])
 
-    def _Ej_to_k(self, Ej):
-        phi_zpf_rms = np.sqrt(np.sum(self.phase_zpf_initial**2))
-        collective_frequency = (
-            np.sum(self.frequencies_initial * self.phase_zpf_initial**2)
-            / phi_zpf_rms**2
-        )
-        Ej_max = collective_frequency / (2 * phi_zpf_rms**2)
-        sigmoid = Ej / Ej_max
-        k_value = -np.log((1 / sigmoid) - 1)
-        return k_value
+        return np.column_stack(columns)
 
-    def save_results_csv(self, filepath: str):
-        """
-        Save circuit fit results to a CSV file with both raw parameters and physical values.
-
-        Args:
-            filepath (str): Path where to save the CSV file
-        """
-        if self.transition_fitter.result is None:
-            raise RuntimeError("No fit has been run yet. Call fit() first.")
-
-        # Get fitted parameters
-        fitted_params = self.transition_fitter.result.x
-        Ej, frequencies, phase_zpf = self._convert_params_to_lists(fitted_params)
-
-        circuit = Circuit(
-            frequencies=frequencies,
-            phase_zpf=phase_zpf,
-            dimensions=self.dimensions,
-            Ej=Ej,
-            phase_ext=0,
-            use_bogoliubov=self.use_bogoliubov,
-        )
-
-        with open(filepath, mode="w", newline="") as csvfile:
-            writer = csv.writer(csvfile)
-
-            # Write header with fit information
-            writer.writerow(["# circuit Fit Results"])
-            writer.writerow(["# Timestamp:", f"{np.datetime64('now')}"])
-            writer.writerow(["# Cost:", str(self.transition_fitter.result.cost)])
-            writer.writerow(["# Optimizer:", self.transition_fitter.optimizer])
-            writer.writerow([])
-
-            # Write raw parameters (k or Ej, frequencies, phase_zpf)
-            writer.writerow(["# Raw Parameters"])
-            writer.writerow(["parameter", "value"])
-            if self.use_bogoliubov:
-                writer.writerow(["k", fitted_params[0]])
-            else:
-                writer.writerow(["Ej", fitted_params[0]])
-            writer.writerow(["# Frequencies"])
-            for i in range(len(frequencies)):
-                writer.writerow([frequencies[i]])
-            writer.writerow(["# Phase ZPF"])
-            for i in range(len(phase_zpf)):
-                writer.writerow([phase_zpf[i]])
-            writer.writerow([])
-
-            # Write physical parameters
-
-            writer.writerow(["# Physical Parameters"])
-            writer.writerow(["parameter", "value", "unit"])
-            writer.writerow(["Ej", Ej, "GHz"])
-            writer.writerow(["collective_frequency", circuit.collective_frequency, "GHz"])
-            writer.writerow(["non_linear_frequency", circuit.non_linear_frequency, "GHz"])
-            writer.writerow(["non_linear_phase_zpf", circuit.non_linear_phase_zpf, "rad"])
-            for i in range(circuit.modes - 1):
-                writer.writerow(
-                    [f"linear_frequency_{i}", circuit.linear_frequencies[i], "GHz"]
-                )
-            for i in range(circuit.modes - 1):
-                writer.writerow([f"linear_coupling_{i}", circuit.linear_coupling[i], "GHz"])
-
-            # Write configuration parameters
-            writer.writerow(["# Configuration"])
-            writer.writerow(["parameter", "value"])
-            writer.writerow(["modes", self.modes])
-            writer.writerow(["truncation", self.truncation])
-            writer.writerow(["x_scale", self.x_scale])
-            writer.writerow(["use_bogoliubov", self.use_bogoliubov])
-            for i, dim in enumerate(self.dimensions):
-                writer.writerow([f"dimension_{i}", dim])
-            writer.writerow([])
-
-            # Write experimental vs theoretical data
-            writer.writerow(["# Data Points"])
-            writer.writerow(
-                [
-                    "transition_i",
-                    "transition_j",
-                    "phi_ext",
-                    "experimental",
-                    "theoretical",
-                    "residual",
-                    "sigma",
-                ]
-            )
-
-            for transition, data_points in self.transition_fitter.data.items():
-                phi_values = [dp.phi_ext for dp in data_points]
-                theo_values = self.transition_fitter.get_theoretical_curve(
-                    transition, phi_values
-                )
-                for dp, tv in zip(data_points, theo_values):
-                    residual = tv - dp.value
-                    writer.writerow(
-                        [
-                            transition[0],
-                            transition[1],
-                            dp.phi_ext,
-                            dp.value,
-                            tv,
-                            residual,
-                            dp.sigma if dp.sigma is not None else "",
-                        ]
-                    )
-
-        print(f"circuit fit results saved to: {filepath}")
-
-    def save_complete_result(self, filepath: str):
-        """
-        Save complete circuit fit results including the full optimization result object.
-
-        Delegates to TransitionFitter and saves additional CSV for readability.
-
-        Args:
-            filepath (str): Path where to save the files (without extension)
-        """
-        if self.transition_fitter.result is None:
-            raise RuntimeError("No fit has been run yet. Call fit() first.")
-
-        # Use TransitionFitter's complete save functionality
-        self.transition_fitter.save_complete_result(filepath)
-
-        # Also save CSV for human readability
-        from pathlib import Path
-
-        csv_path = Path(filepath).with_suffix(".csv")
-        self.save_results_csv(str(csv_path))
-
-        print(f"Additional CSV file saved: {csv_path}")
-        print("Use get_analysis_report() for circuit-specific parameters.")
-
-    @classmethod
-    def load_complete_result(cls, filepath: str):
-        """
-        Load complete circuit fit results from a pickle file.
-
-        Note: This loads a TransitionFitter and wraps it in a Fit_circuit instance.
-        The original circuit configuration must be reconstructed from the fit data.
-
-        Args:
-            filepath (str): Path to the pickle file
-
-        Returns:
-            Fit_circuit: New instance with the complete loaded result
-        """
-        # Load the TransitionFitter
-        loaded_transition_fitter = TransitionFitter.load_complete_result(filepath)
-
-        # We need to reconstruct circuit configuration from the fit parameters
-        # This is a limitation - we don't have the original circuit config
-        print("Warning: circuit configuration reconstructed from fit parameters.")
-        print("Some original settings (bounds, truncation) may not be preserved.")
-
-        # Extract basic info from the loaded fitter
-        transitions = loaded_transition_fitter.data
-
-        # Minimal reconstruction - user may need to adjust
-        estimated_modes = 1  # Default assumption
-
-        new_fitter = cls(
-            Ej_initial=1.0,  # Default - user should verify
-            frequencies_initial=[5.0] * estimated_modes,  # Default - user should verify
-            phase_zpf_initial=[0.5] * estimated_modes,  # Default - user should verify
-            dimensions=[10] * estimated_modes,  # Default - user should verify
-            transitions=transitions,
-            truncation=40,  # Default - user should verify
-            optimizer=loaded_transition_fitter.optimizer,
-        )
-
-        # Replace with the loaded transition_fitter
-        new_fitter.transition_fitter = loaded_transition_fitter
-
-        print("circuit fitter loaded with reconstructed configuration.")
-        print("Please verify initial parameters match your original setup.")
-
-        return new_fitter
-
-    def get_analysis_report(self) -> dict:
-        """
-        Get comprehensive analysis report using all TransitionFitter capabilities.
-
-        This method leverages the complete result object to provide detailed
-        analysis including parameter uncertainties, convergence analysis, etc.
-
-        Returns:
-            dict: Complete analysis report from TransitionFitter with circuit parameters
-        """
-        if self.transition_fitter.result is None:
-            raise RuntimeError("No fit has been run yet. Call fit() first.")
-
-        # Get comprehensive report from TransitionFitter
-        report = self.transition_fitter.get_comprehensive_report()
-
-        # Add circuit-specific information
-        fitted_params = self.transition_fitter.result.x
-        Ej, frequencies, phase_zpf = self._convert_params_to_lists(fitted_params)
-
-        circuit = Circuit(
-            frequencies=frequencies,
-            phase_zpf=phase_zpf,
-            dimensions=self.dimensions,
-            Ej=Ej,
-            phase_ext=0,
-            use_bogoliubov=self.use_bogoliubov,
-        )
-
-        report["circuit_parameters"] = {
-            "Ej": float(Ej),
-            "collective_frequency": float(circuit.collective_frequency),
-            "non_linear_frequency": float(circuit.non_linear_frequency),
-            "non_linear_phase_zpf": float(circuit.non_linear_phase_zpf),
-            "linear_frequencies": [float(f) for f in circuit.linear_frequencies]
-            if circuit.modes > 1
-            else [],
-            "linear_coupling": [float(c) for c in circuit.linear_coupling]
-            if circuit.modes > 1
-            else [],
-            "modes": self.modes,
-            "truncation": self.truncation,
-            "use_bogoliubov": self.use_bogoliubov,
-        }
-
-        return report
-
-    def print_analysis_summary(
-        self, show_transitions: bool = True, show_outliers: bool = True
-    ):
-        """
-        Print formatted analysis summary including circuit-specific parameters.
-
-        This delegates to TransitionFitter's print_fit_summary and adds circuit info.
-
-        Args:
-            show_transitions (bool): Whether to show individual transition analysis
-            show_outliers (bool): Whether to show outlier information
-        """
-        if self.transition_fitter.result is None:
-            raise RuntimeError("No fit has been run yet. Call fit() first.")
-
-        # Print TransitionFitter summary
-        self.transition_fitter.print_fit_summary(show_transitions, show_outliers)
-
-        # Add circuit-specific information
-        fitted_params = self.transition_fitter.result.x
-        Ej, frequencies, phase_zpf = self._convert_params_to_lists(fitted_params)
-
-        circuit = Circuit(
-            frequencies=frequencies,
-            phase_zpf=phase_zpf,
-            dimensions=self.dimensions,
-            Ej=Ej,
-            phase_ext=0,
-            use_bogoliubov=self.use_bogoliubov,
-        )
-
-        print("\ncircuit PARAMETERS:")
-        print(f"  Ej = {Ej:.4f} GHz")
-        print(f"  Collective frequency = {circuit.collective_frequency:.4f} GHz")
-        print(f"  Non-linear frequency = {circuit.non_linear_frequency:.4f} GHz")
-        print(f"  Non-linear phase ZPF = {circuit.non_linear_phase_zpf:.4f} rad")
-
-        if circuit.modes > 1:
-            for i, (freq, coupling) in enumerate(
-                zip(circuit.linear_frequencies, circuit.linear_coupling)
-            ):
-                print(
-                    f"  Linear mode {i}: {freq:.4f} GHz (coupling: {coupling:.4f} GHz)"
-                )
-
-        print(f"  Modes = {self.modes}")
-        print(f"  Truncation = {self.truncation}")
-        print(f"  Use Bogoliubov = {self.use_bogoliubov}")
-
-    # Delegate common analysis methods to TransitionFitter
     def get_fit_statistics(self):
-        """Get fit statistics. Delegates to TransitionFitter."""
         return self.transition_fitter.get_fit_statistics()
 
     def get_residual_analysis(self):
-        """Get residual analysis. Delegates to TransitionFitter."""
         return self.transition_fitter.get_residual_analysis()
 
     def get_parameter_uncertainty(self, confidence_level: float = 0.95):
-        """Get parameter uncertainties. Delegates to TransitionFitter."""
         return self.transition_fitter.get_parameter_uncertainty(confidence_level)
 
     def get_convergence_analysis(self):
-        """Get convergence analysis. Delegates to TransitionFitter."""
         return self.transition_fitter.get_convergence_analysis()
 
     def get_transition_analysis(self):
-        """Get per-transition analysis. Delegates to TransitionFitter."""
         return self.transition_fitter.get_transition_analysis()
 
-    def get_comprehensive_report(self):
-        """Get comprehensive report with circuit parameters. Same as get_analysis_report()."""
-        return self.get_analysis_report()
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _build_initial_parameter_vector(self) -> np.ndarray:
+        params = []
+        Ej_initial = self.Ej_initial
+        if self.use_bogoliubov:
+            k_initial = self._Ej_to_k(
+                Ej_initial,
+                self.non_linear_frequency_initial,
+                self.non_linear_phase_zpf_initial,
+            )
+            params.append(k_initial)
+        else:
+            params.append(Ej_initial)
 
-    def print_fit_summary(
-        self, show_transitions: bool = True, show_outliers: bool = True
-    ):
-        """Print fit summary with circuit parameters. Same as print_analysis_summary()."""
-        return self.print_analysis_summary(show_transitions, show_outliers)
+        params.append(self.non_linear_frequency_initial)
+        params.append(self.non_linear_phase_zpf_initial)
+        if self.fit_Ej_second:
+            params.append(self.Ej_second_initial)
+        params.extend(self.linear_frequencies_initial.tolist())
+        params.extend(self.linear_couplings_initial.tolist())
 
-    def fit_multistart(self, *args, **kwargs):
-        """Multi-start fitting. Delegates to TransitionFitter."""
-        return self.transition_fitter.fit_multistart(*args, **kwargs)
+        if self.has_fermionic_coupling:
+            params.append(self.epsilon_r_initial)
+            params.append(self.Gamma_initial)
 
-    @classmethod
-    def load_results_csv(cls, filepath: str):
-        """
-        Load circuit fit results from a CSV file and return a dictionary with all information.
+        return np.asarray(params, dtype=float)
 
-        Args:
-            filepath (str): Path to the CSV file
+    def _build_bounds(self) -> np.ndarray:
+        lower: list[float] = []
+        upper: list[float] = []
 
-        Returns:
-            dict: Dictionary containing fitted parameters, physical values, and configuration
-        """
-        results = {
-            "raw_parameters": {},
-            "physical_parameters": {},
-            "configuration": {},
-            "fit_info": {},
-            "data_points": [],
-        }
+        if self.use_bogoliubov:
+            Ej_max = self._Ej_max(
+                self.non_linear_frequency_initial, self.non_linear_phase_zpf_initial
+            )
+            if self.Ej_lower_bound >= Ej_max:
+                raise ValueError(
+                    "Ej_lower_bound must be strictly smaller than the Bogoliubov stability limit Ej_max."
+                )
+            lower.append(
+                self._Ej_to_k(
+                    self.Ej_lower_bound,
+                    self.non_linear_frequency_initial,
+                    self.non_linear_phase_zpf_initial,
+                )
+            )
+            upper.append(np.inf)
+        else:
+            lower.append(self.Ej_lower_bound)
+            upper.append(np.inf)
 
-        with open(filepath, newline="") as csvfile:
-            reader = csv.reader(csvfile)
-            current_section = None
+        # non-linear frequency bound
+        if self.non_linear_frequency_bounds is None:
+            lower.append(0.0)
+            upper.append(np.inf)
+        else:
+            if len(self.non_linear_frequency_bounds) != 2:
+                raise ValueError(
+                    "non_linear_frequency_bounds must be a 2-tuple (min, max)."
+                )
+            lower.append(self.non_linear_frequency_bounds[0])
+            upper.append(self.non_linear_frequency_bounds[1])
 
-            for row in reader:
-                if not row or row[0].startswith("#"):
-                    if len(row) > 1 and "Cost:" in row[1]:
-                        results["fit_info"]["cost"] = float(
-                            row[1].split(":")[1].strip()
-                        )
-                    elif len(row) > 1 and "Optimizer:" in row[1]:
-                        results["fit_info"]["optimizer"] = row[1].split(":")[1].strip()
-                    elif len(row) > 1 and "Timestamp:" in row[1]:
-                        results["fit_info"]["timestamp"] = row[1].split(":")[1].strip()
-                    continue
+        # non-linear phase zpf bound
+        if self.non_linear_phase_zpf_bounds is None:
+            lower.append(0.0)
+            upper.append(np.inf)
+        else:
+            if len(self.non_linear_phase_zpf_bounds) != 2:
+                raise ValueError(
+                    "non_linear_phase_zpf_bounds must be a 2-tuple (min, max)."
+                )
+            lower.append(self.non_linear_phase_zpf_bounds[0])
+            upper.append(self.non_linear_phase_zpf_bounds[1])
 
-                if row[0] == "parameter" and len(row) > 1:
-                    if row[1] == "value":
-                        if len(row) == 2:
-                            current_section = "raw_parameters"
-                        else:  # has unit column
-                            current_section = "physical_parameters"
-                    continue
-                elif row[0] == "transition_i":
-                    current_section = "data_points"
-                    continue
+        # Ej_second bounds (only when fitting)
+        if self.fit_Ej_second:
+            if self.Ej_second_bounds is None:
+                lower.append(-np.inf)
+                upper.append(np.inf)
+            else:
+                if len(self.Ej_second_bounds) != 2:
+                    raise ValueError("Ej_second_bounds must be a 2-tuple (min, max).")
+                lower.append(self.Ej_second_bounds[0])
+                upper.append(self.Ej_second_bounds[1])
 
-                if current_section == "raw_parameters" and len(row) >= 2:
-                    try:
-                        results["raw_parameters"][row[0]] = float(row[1])
-                    except ValueError:
-                        results["configuration"][row[0]] = row[1]
-                elif current_section == "physical_parameters" and len(row) >= 2:
-                    try:
-                        results["physical_parameters"][row[0]] = {
-                            "value": float(row[1]),
-                            "unit": row[2] if len(row) > 2 else "",
-                        }
-                    except ValueError:
-                        pass
-                elif current_section == "data_points" and len(row) >= 7:
-                    try:
-                        sigma_val = row[6].strip()
-                        data_point = {
-                            "transition": (int(row[0]), int(row[1])),
-                            "phi_ext": float(row[2]),
-                            "experimental": float(row[3]),
-                            "theoretical": float(row[4]),
-                            "residual": float(row[5]),
-                            "sigma": float(sigma_val) if sigma_val else None,
-                        }
-                        results["data_points"].append(data_point)
-                    except ValueError:
-                        pass
+        # linear frequencies bounds
+        if self.linear_mode_count > 0:
+            if self.linear_frequencies_bounds is not None:
+                for bounds in self.linear_frequencies_bounds:
+                    lower.append(bounds[0])
+                    upper.append(bounds[1])
+            else:
+                lower.extend([0.0] * self.linear_mode_count)
+                upper.extend([np.inf] * self.linear_mode_count)
 
-        print(f"circuit fit results loaded from: {filepath}")
-        return results
+            # linear couplings bounds (non-negative by default)
+            if self.linear_couplings_bounds is not None:
+                for bounds in self.linear_couplings_bounds:
+                    lower.append(bounds[0])
+                    upper.append(bounds[1])
+            else:
+                lower.extend([0.0] * self.linear_mode_count)
+                upper.extend([np.inf] * self.linear_mode_count)
 
-    def create_from_csv(self, filepath: str, transitions_data: dict = None):
-        """
-        Create a new Fit_circuit instance using parameters loaded from a CSV file.
+        if self.has_fermionic_coupling:
+            if self.epsilon_r_bounds is None:
+                lower.append(0.0)
+                upper.append(np.inf)
+            else:
+                lower.append(self.epsilon_r_bounds[0])
+                upper.append(self.epsilon_r_bounds[1])
 
-        NOTE: This method loads only basic parameter information from CSV.
-        For complete analysis capabilities (including parameter uncertainties,
-        convergence analysis, etc.), use load_complete_result() instead.
+            if self.Gamma_bounds is None:
+                lower.append(0.0)
+                upper.append(np.inf)
+            else:
+                lower.append(self.Gamma_bounds[0])
+                upper.append(self.Gamma_bounds[1])
 
-        Args:
-            filepath (str): Path to the CSV file with saved fit results
-            transitions_data (dict, optional): New transition data. If None, uses data from CSV.
+        return np.array([lower, upper], dtype=float)
 
-        Returns:
-            Fit_circuit: New instance with loaded parameters as initial values
-        """
-        loaded_results = self.load_results_csv(filepath)
+    def _circuit_from_params(self, phase_ext: float, params: Sequence[float]) -> Circuit:
+        (
+            Ej,
+            non_linear_frequency,
+            non_linear_phase_zpf,
+            Ej_second,
+            linear_frequencies,
+            linear_couplings,
+            epsilon_r,
+            Gamma,
+        ) = self._unpack_parameter_vector(params)
 
-        # Extract parameters
-        raw_params = loaded_results["raw_parameters"]
-        config = loaded_results["configuration"]
+        linear_frequencies_seq = None if linear_frequencies.size == 0 else linear_frequencies
+        linear_couplings_seq = None if linear_couplings.size == 0 else linear_couplings
 
-        # Reconstruct initial parameters
-        k = raw_params["k"]
-        frequencies = [
-            raw_params[f"frequency_{i}"]
-            for i in range(int(config.get("modes", self.modes)))
-        ]
-        phase_zpf = [
-            raw_params[f"phase_zpf_{i}"]
-            for i in range(int(config.get("modes", self.modes)))
-        ]
-        dimensions = [
-            int(config.get(f"dimension_{i}", 2))
-            for i in range(int(config.get("modes", self.modes)))
-        ]
-
-        # Convert k back to Ej for initial value
-        Ej_initial = self._k_to_Ej(k, frequencies, phase_zpf)
-
-        # Prepare transitions data
-        if transitions_data is None:
-            transitions_data = {}
-            for dp in loaded_results["data_points"]:
-                transition = dp["transition"]
-                if transition not in transitions_data:
-                    transitions_data[transition] = []
-                transitions_data[transition].append((dp["phi_ext"], dp["experimental"]))
-
-        # Create new instance
-        new_fitter = CircuitFitter(
-            Ej_initial=Ej_initial,
-            frequencies_initial=frequencies,
-            phase_zpf_initial=phase_zpf,
-            dimensions=dimensions,
-            transitions=transitions_data,
-            truncation=int(config.get("truncation", 40)),
-            x_scale=float(config.get("x_scale", 2 * np.pi)),
-            optimizer=loaded_results["fit_info"].get("optimizer", "least_squares"),
+        return Circuit(
+            non_linear_frequency=non_linear_frequency,
+            non_linear_phase_zpf=non_linear_phase_zpf,
+            linear_frequencies=linear_frequencies_seq,
+            linear_couplings=linear_couplings_seq,
+            dimensions=self.dimensions,
+            Ej=Ej,
+            Ej_second=Ej_second,
+            Gamma=Gamma,
+            epsilon_r=epsilon_r,
+            phase_ext=phase_ext,
         )
 
-        return new_fitter
+    def _unpack_parameter_vector(
+        self, params: Sequence[float]
+    ) -> Tuple[
+        float,
+        float,
+        float,
+        float,
+        np.ndarray,
+        np.ndarray,
+        Optional[float],
+        Optional[float],
+    ]:
+        idx = 0
+        params = np.asarray(params, dtype=float)
+
+        k_or_Ej = params[idx]
+        idx += 1
+
+        non_linear_frequency = params[idx]
+        idx += 1
+
+        non_linear_phase_zpf = params[idx]
+        idx += 1
+
+        if self.fit_Ej_second:
+            Ej_second = params[idx]
+            idx += 1
+        else:
+            Ej_second = self.Ej_second_value
+
+        linear_freq_slice = slice(idx, idx + self.linear_mode_count)
+        linear_frequencies = params[linear_freq_slice]
+        idx += self.linear_mode_count
+
+        linear_coup_slice = slice(idx, idx + self.linear_mode_count)
+        linear_couplings = params[linear_coup_slice]
+        idx += self.linear_mode_count
+
+        if self.use_bogoliubov:
+            Ej = self._k_to_Ej(k_or_Ej, non_linear_frequency, non_linear_phase_zpf)
+        else:
+            Ej = k_or_Ej
+
+        epsilon_r = None
+        Gamma = None
+        if self.has_fermionic_coupling:
+            epsilon_r = params[idx]
+            idx += 1
+            Gamma = params[idx]
+
+        return (
+            float(Ej),
+            float(non_linear_frequency),
+            float(non_linear_phase_zpf),
+            float(Ej_second),
+            np.asarray(linear_frequencies, dtype=float),
+            np.asarray(linear_couplings, dtype=float),
+            None if epsilon_r is None else float(epsilon_r),
+            None if Gamma is None else float(Gamma),
+        )
+
+    @staticmethod
+    def _Ej_max(non_linear_frequency: float, non_linear_phase_zpf: float) -> float:
+        if non_linear_phase_zpf <= 0:
+            raise ValueError("non_linear_phase_zpf must be positive for Bogoliubov mapping.")
+        return non_linear_frequency / (2.0 * non_linear_phase_zpf**2)
+
+    def _Ej_to_k(
+        self,
+        Ej: float,
+        non_linear_frequency: float,
+        non_linear_phase_zpf: float,
+    ) -> float:
+        if Ej <= 0:
+            return -np.inf
+        Ej_max = self._Ej_max(non_linear_frequency, non_linear_phase_zpf)
+        if Ej >= Ej_max:
+            raise ValueError(
+                "Ej must be strictly smaller than Ej_max = collective_frequency/(2*phi_zpf^2)"
+            )
+        sigmoid = Ej / Ej_max
+        return np.log(sigmoid / (1.0 - sigmoid))
+
+    def _k_to_Ej(
+        self,
+        k: float,
+        non_linear_frequency: float,
+        non_linear_phase_zpf: float,
+    ) -> float:
+        Ej_max = self._Ej_max(non_linear_frequency, non_linear_phase_zpf)
+        sigmoid = 1.0 / (1.0 + np.exp(-k))
+        return Ej_max * sigmoid
+
+    def _dEj_dk(
+        self,
+        k: float,
+        non_linear_frequency: float,
+        non_linear_phase_zpf: float,
+    ) -> float:
+        Ej_max = self._Ej_max(non_linear_frequency, non_linear_phase_zpf)
+        sigmoid = 1.0 / (1.0 + np.exp(-k))
+        return Ej_max * sigmoid * (1.0 - sigmoid)

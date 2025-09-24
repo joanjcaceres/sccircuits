@@ -4,23 +4,17 @@ from typing import Dict, List, Optional, Tuple, Union
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.widgets import Button, TextBox
+
+try:  # pragma: no cover - fallback when run as a script
+    from ._pointpicker_tagui import BaseTagUI, create_tag_ui
+except ImportError:  # pragma: no cover
+    from _pointpicker_tagui import BaseTagUI, create_tag_ui  # type: ignore
 
 # Type alias for load_csv_to_dict return type
 PointDict = Dict[
     Tuple[int, int],
     List[Union[Tuple[float, float], Tuple[float, float, Optional[float]]]],
 ]
-
-# Optional: interactive label input for Jupyter widgets
-try:
-    import ipywidgets as _ipyw
-    from IPython.display import clear_output as _ipy_clear
-    from IPython.display import display as _ipy_display
-
-    _IPYW_AVAILABLE = True
-except Exception:
-    _IPYW_AVAILABLE = False
 
 # Disable Matplotlib's default "l" key (toggle y‑log scale) so we can use it freely
 if "l" in plt.rcParams.get("keymap.yscale", []):
@@ -75,19 +69,11 @@ class PointPicker:
         self.ax = ax
         self.pick_radius = pick_radius
 
-        # Widget configuration
-        self._use_widgets = bool(use_widgets and _IPYW_AVAILABLE)
-        self._widget_box = None  # ipywidgets container
-        self._pending_tag_idx: Optional[int] = None  # idx awaiting widget confirm
-        self._mpl_box_ax = self._mpl_button_ax = None
-        self._mpl_i_ax = self._mpl_j_ax = None  # Separate axes for i and j textboxes
-        self._mpl_sigma_ax = None  # Axis for sigma textbox
-        self._mpl_remove_ax = None  # Axis for remove tag button
-        self._mpl_textbox = self._mpl_button = None
-        self._mpl_i_textbox = self._mpl_j_textbox = None  # Separate textbox references
-        self._mpl_sigma_textbox = None  # Sigma textbox reference
-        self._mpl_remove_button = None  # Remove tag button reference
-        self._input_in_progress = False  # Flag to prevent multiple input() calls
+        # Tagging UI (ipywidgets when available, fallback to matplotlib controls)
+        self._prefer_widgets = bool(use_widgets)
+        self._tag_ui: BaseTagUI = create_tag_ui(
+            self, prefer_widgets=self._prefer_widgets
+        )
 
         # Axis‑lock configuration
         self.axis_lock = axis_lock
@@ -133,264 +119,39 @@ class PointPicker:
         marker.set_markeredgecolor(color)
 
     # ------------------------------------------------------------------
-    # Widget helper for tagging
+    # Tagging helpers
     # ------------------------------------------------------------------
-    def _build_tag_widget(self):
-        """Build (or show) a little widget panel to input i,j tags."""
-        if not self._use_widgets:
+    def _tag_defaults_for(
+        self, idx: int
+    ) -> Tuple[Optional[Tuple[int, int]], Optional[float]]:
+        current_label = self.labels[idx] if idx < len(self.labels) else None
+        sigma = self.sigmas[idx] if idx < len(self.sigmas) else None
+        if current_label is None:
+            current_label = self._current_label
+        if sigma is None:
+            sigma = self._current_sigma
+        return current_label, sigma
+
+    def _apply_tag(self, idx: int, i: int, j: int, sigma: Optional[float]) -> None:
+        if idx < 0 or idx >= len(self.points):
+            raise ValueError(f"Invalid point index {idx}")
+        if sigma is not None and sigma <= 0:
+            raise ValueError("sigma must be positive when provided")
+        label = (int(i), int(j))
+        self.labels[idx] = label
+        self._current_label = label
+        self.sigmas[idx] = sigma
+        self._current_sigma = sigma
+        self._set_marker_color(idx)
+        self.ax.figure.canvas.draw_idle()
+
+    def _remove_tag(self, idx: int) -> None:
+        if idx < 0 or idx >= len(self.points):
             return
-        if self._widget_box is None:
-            i_field = _ipyw.IntText(
-                description="i:", layout=_ipyw.Layout(width="140px")
-            )
-            j_field = _ipyw.IntText(
-                description="j:", layout=_ipyw.Layout(width="140px")
-            )
-            sigma_field = _ipyw.Text(
-                description="sigma:", layout=_ipyw.Layout(width="160px")
-            )
-            # Prefill fields: if the clicked point already has a label/sigma, show it;
-            # otherwise fall back to the last‑used values.
-            initial_label = None
-            if self._pending_tag_idx is not None:
-                lab = self.labels[self._pending_tag_idx]
-                if lab is not None:
-                    initial_label = lab
-            if initial_label is None:
-                initial_label = self._current_label
-            if initial_label is not None:
-                i_field.value, j_field.value = initial_label
-
-            initial_sigma: Optional[float] = None
-            if self._pending_tag_idx is not None:
-                sigma_val = self.sigmas[self._pending_tag_idx]
-                if sigma_val is not None:
-                    initial_sigma = sigma_val
-            if initial_sigma is None:
-                initial_sigma = self._current_sigma
-            if initial_sigma is not None:
-                sigma_field.value = f"{initial_sigma:g}"
-            else:
-                sigma_field.value = ""
-
-            btn = _ipyw.Button(description="OK", layout=_ipyw.Layout(width="80px"))
-            remove_btn = _ipyw.Button(
-                description="Remove Tag", layout=_ipyw.Layout(width="120px")
-            )
-            lbl_out = _ipyw.Output(layout=_ipyw.Layout(font_size="12px"))
-            box = _ipyw.VBox(
-                [_ipyw.HBox([i_field, j_field, sigma_field, btn, remove_btn]), lbl_out]
-            )
-            box.layout = _ipyw.Layout(width="640px")
-            self._widget_box = (
-                box,
-                i_field,
-                j_field,
-                sigma_field,
-                btn,
-                remove_btn,
-                lbl_out,
-            )
-
-            def _on_ok(_b):
-                if self._pending_tag_idx is None:
-                    with lbl_out:
-                        _ipy_clear()
-                        print("No point selected.")
-                    return
-                idx = self._pending_tag_idx
-                try:
-                    i = int(i_field.value)
-                    j = int(j_field.value)
-                    sigma_raw = str(sigma_field.value).strip()
-                    if sigma_raw:
-                        sigma_val = float(sigma_raw)
-                    else:
-                        sigma_val = None
-                except Exception:
-                    with lbl_out:
-                        _ipy_clear()
-                        print("Valores inválidos.")
-                    return
-                if sigma_val is not None and sigma_val <= 0:
-                    with lbl_out:
-                        _ipy_clear()
-                        print("sigma debe ser > 0 o dejar vacío.")
-                    return
-                self.labels[idx] = (i, j)
-                self._current_label = (i, j)
-                self.sigmas[idx] = sigma_val
-                self._current_sigma = sigma_val
-                # update marker color depending on sigma availability
-                self._set_marker_color(idx)
-                self.ax.figure.canvas.draw_idle()
-                self._pending_tag_idx = None
-                with lbl_out:
-                    _ipy_clear()
-                    if sigma_val is None:
-                        print(f"Punto #{idx} etiquetado con ({i},{j}) sin sigma")
-                    else:
-                        print(
-                            f"Punto #{idx} etiquetado con ({i},{j}) y sigma={sigma_val}"
-                        )
-                # close widget after labeling
-                box.close()
-                self._widget_box = None
-
-            def _on_remove(_b):
-                if self._pending_tag_idx is None:
-                    with lbl_out:
-                        _ipy_clear()
-                        print("No point selected.")
-                    return
-                idx = self._pending_tag_idx
-                self.labels[idx] = None  # Remove the tag
-                self.sigmas[idx] = None
-                # update marker color to red for unlabeled point
-                self._set_marker_color(idx)
-                self.ax.figure.canvas.draw_idle()
-                with lbl_out:
-                    _ipy_clear()
-                    print(f"Punto #{idx} tag removed ✓")
-                # Clear the text boxes
-                i_field.value = 0
-                j_field.value = 0
-                sigma_field.value = ""
-                self._pending_tag_idx = None
-                # close widget after removing tag
-                box.close()
-                self._widget_box = None
-
-            btn.on_click(_on_ok)
-            remove_btn.on_click(_on_remove)
-            # Display widget under the current figure
-            _ipy_display(box)
-
-    # ------------------------------------------------------------------
-    # Matplotlib widget helper (non-Jupyter)
-    # ------------------------------------------------------------------
-    def _build_mpl_tag_box(self, initial: Optional[Tuple[int, int]] = None):
-        """
-        Two separate TextBoxes (i: and j:) + Button under the figure for tagging in plain .py scripts.
-        Similar to the Jupyter widget interface.
-        """
-        if self._mpl_box_ax is not None:  # already visible
-            return
-
-        fig = self.ax.figure
-        # Create axes for i textbox, j textbox, OK button, and Remove Tag button
-        self._mpl_i_ax = fig.add_axes([0.08, 0.02, 0.10, 0.05])
-        self._mpl_j_ax = fig.add_axes([0.20, 0.02, 0.10, 0.05])
-        self._mpl_sigma_ax = fig.add_axes([0.32, 0.02, 0.14, 0.05])
-        self._mpl_button_ax = fig.add_axes([0.48, 0.02, 0.08, 0.05])
-        self._mpl_remove_ax = fig.add_axes([0.58, 0.02, 0.14, 0.05])
-
-        # Create the two text boxes
-        i_txt = TextBox(self._mpl_i_ax, "i:", initial="")
-        j_txt = TextBox(self._mpl_j_ax, "j:", initial="")
-        sigma_txt = TextBox(self._mpl_sigma_ax, "sigma:", initial="")
-
-        # Pre-fill with initial values if provided
-        if initial is not None:
-            i_txt.set_val(str(initial[0]))
-            j_txt.set_val(str(initial[1]))
-
-        sigma_initial: Optional[float] = None
-        if self._pending_tag_idx is not None:
-            sigma_initial = self.sigmas[self._pending_tag_idx]
-        if sigma_initial is None:
-            sigma_initial = self._current_sigma
-        if sigma_initial is not None:
-            sigma_txt.set_val(f"{sigma_initial:g}")
-        else:
-            sigma_txt.set_val("")
-
-        btn = Button(self._mpl_button_ax, "OK")
-        remove_btn = Button(self._mpl_remove_ax, "Remove Tag")
-
-        def _apply(_=None):
-            if self._pending_tag_idx is None:
-                return
-            try:
-                i = int(i_txt.text.strip())
-                j = int(j_txt.text.strip())
-            except Exception:
-                print("Invalid format. Please enter integers in both i and j fields.")
-                return
-            sigma_raw = sigma_txt.text.strip()
-            sigma_val: Optional[float]
-            if sigma_raw:
-                try:
-                    sigma_val = float(sigma_raw)
-                except Exception:
-                    print("Invalid sigma. Please enter a numeric value or leave blank.")
-                    return
-                if sigma_val <= 0:
-                    print("Invalid sigma. Enter a positive value or leave blank.")
-                    return
-            else:
-                sigma_val = None
-            idx = self._pending_tag_idx
-            self.labels[idx] = (i, j)
-            self._current_label = (i, j)
-            self.sigmas[idx] = sigma_val
-            self._current_sigma = sigma_val
-            self._set_marker_color(idx)
-            self.ax.figure.canvas.draw_idle()
-            if sigma_val is None:
-                print(f"Point #{idx} labeled as ({i}, {j}) without sigma ✓")
-            else:
-                print(
-                    f"Point #{idx} labeled as ({i}, {j}) with sigma={sigma_val:.4g} ✓"
-                )
-
-            # Don't close the widgets - keep them open for next tagging
-            # Just reset the pending index
-            self._pending_tag_idx = None
-
-            # Redraw the figure
-            fig.canvas.draw_idle()
-
-        def _remove_tag(_=None):
-            if self._pending_tag_idx is None:
-                return
-            idx = self._pending_tag_idx
-            self.labels[idx] = None  # Remove the tag
-            self.sigmas[idx] = None
-            self._set_marker_color(idx)
-            self.ax.figure.canvas.draw_idle()
-            print(f"Point #{idx} tag removed ✓")
-
-            # Clear the text boxes
-            i_txt.set_val("")
-            j_txt.set_val("")
-            sigma_txt.set_val("")
-
-            # Don't close the widgets - keep them open for next tagging
-            # Just reset the pending index
-            self._pending_tag_idx = None
-
-            # Redraw the figure
-            fig.canvas.draw_idle()
-
-        # Connect events to both text boxes and buttons
-        i_txt.on_submit(_apply)
-        j_txt.on_submit(_apply)
-        sigma_txt.on_submit(_apply)
-        btn.on_clicked(_apply)
-        remove_btn.on_clicked(_remove_tag)
-
-        # Store references
-        self._mpl_i_textbox = i_txt
-        self._mpl_j_textbox = j_txt
-        self._mpl_sigma_textbox = sigma_txt
-        self._mpl_button = btn
-        self._mpl_remove_button = remove_btn
-
-        # For compatibility with cleanup methods, keep the first axis reference
-        self._mpl_box_ax = self._mpl_i_ax
-
-        fig.canvas.draw_idle()
+        self.labels[idx] = None
+        self.sigmas[idx] = None
+        self._set_marker_color(idx)
+        self.ax.figure.canvas.draw_idle()
 
     # ------------------------------------------------------------------
     # Terminal input helper for tagging
@@ -410,7 +171,7 @@ class PointPicker:
             print(f"Point #{idx} at ({x:.2f}, {y:.2f}) → unlabeled")
 
     # Note: _terminal_tag_input removed to avoid blocking matplotlib interaction
-    # Tag mode now uses matplotlib widgets exclusively for better user experience
+    # Tag mode now delegates to an environment-specific UI (ipywidgets or matplotlib)
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -496,7 +257,7 @@ class PointPicker:
 
     # -- Key presses ----------------------------------------------------
     def _on_key(self, event):
-        # Clean up matplotlib widgets when switching away from tag mode
+        # Track previous mode to close tagging UI when switching away from tag mode
         old_mode = self.mode
 
         if event.key in {"a", "escape"}:
@@ -516,9 +277,10 @@ class PointPicker:
                 self._vline.remove()
                 self._vline = None
 
-        # Clean up matplotlib widgets when leaving tag mode
+        # Close tagging UI when leaving tag mode
         if old_mode == "tag" and self.mode != "tag":
-            self._cleanup_mpl_widgets()
+            if self._tag_ui is not None:
+                self._tag_ui.close()
 
         self._update_title()
 
@@ -572,94 +334,9 @@ class PointPicker:
         print(f"Deleted point #{idx}")
 
     def _tag_point(self, idx: int):
-        """
-        When pressing 't' over a point:
-        - In Jupyter (%matplotlib widget), uses ipywidgets to pop up a dialog.
-        - In a plain .py script, uses matplotlib TextBox + Button below the figure.
-        """
-        # Check if we're really in a Jupyter environment (not just a .py script)
-        try:
-            # This will only work in a real Jupyter/IPython environment
-            from IPython import get_ipython
-
-            ipython = get_ipython()
-            is_jupyter = ipython is not None and hasattr(ipython, "kernel")
-        except ImportError:
-            is_jupyter = False
-
-        # 1) Jupyter / ipywidgets path (only if truly in Jupyter)
-        if self._use_widgets and is_jupyter:
-            # Mark this index as awaiting confirmation
-            self._pending_tag_idx = idx
-
-            if self._widget_box is None:
-                # First time → create and pre-fill the widget automatically
-                self._build_tag_widget()
-            else:
-                # Widget already visible → just update the fields
-                (box, i_field, j_field, sigma_field, btn, remove_btn, out) = (
-                    self._widget_box
-                )
-                # Pick up the existing label/sigma if set, else the last-used ones
-                lab = (
-                    self.labels[idx]
-                    if self.labels[idx] is not None
-                    else self._current_label
-                )
-                if lab is not None:
-                    i_field.value, j_field.value = lab
-                sigma_val = (
-                    self.sigmas[idx]
-                    if self.sigmas[idx] is not None
-                    else self._current_sigma
-                )
-                if sigma_val is not None:
-                    sigma_field.value = f"{sigma_val:g}"
-                else:
-                    sigma_field.value = ""
-                # Provide user feedback inside the widget
-                with out:
-                    _ipy_clear()
-                    print(
-                        "Point #{} selected. Modify i, j, sigma or press OK. Or remove tag.".format(
-                            idx
-                        )
-                    )
-
-            print(
-                "Please enter i, j and optional sigma in the widget and press OK to tag point #{}, or Remove Tag to remove label".format(
-                    idx
-                )
-            )
+        if idx < 0 or idx >= len(self.points):
             return
-
-        # 2) Script (.py) → Matplotlib TextBox + Button (non-blocking)
-        self._pending_tag_idx = idx
-        current_label = self.labels[idx]
-        x, y = self.points[idx]
-
-        # Pre-fill with this point's existing label or the last-used label
-        initial = (
-            self.labels[idx] if self.labels[idx] is not None else self._current_label
-        )
-
-        # Always clean up existing widgets first to prevent mouse grab conflicts
-        if self._mpl_i_textbox is not None or self._mpl_j_textbox is not None:
-            self._cleanup_mpl_widgets()
-
-        # Create fresh widgets
-        self._build_mpl_tag_box(initial)
-
-        # Provide feedback about the selected point
-        if current_label is not None:
-            print(
-                f"Point #{idx} at ({x:.2f}, {y:.2f}) currently labeled as ({current_label[0]}, {current_label[1]})"
-            )
-        else:
-            print(f"Point #{idx} at ({x:.2f}, {y:.2f}) currently unlabeled")
-        print(
-            "Enter i, j and optional sigma in the text boxes below the figure and press Enter or click OK."
-        )
+        self._tag_ui.show(idx)
 
     def _index_near(self, event) -> Optional[int]:
         # Return None if no points are stored
@@ -677,92 +354,15 @@ class PointPicker:
     # Public utilities
     # ------------------------------------------------------------------
     def disconnect(self):
-        # Clean up any pending matplotlib widgets first
-        self._cleanup_mpl_widgets()
+        # Close any active tagging UI
+        if self._tag_ui is not None:
+            self._tag_ui.close()
 
         if self._vline is not None:
             self._vline.remove()
-        # Close widget if open (optional)
-        if self._widget_box is not None and hasattr(self._widget_box[0], "close"):
-            self._widget_box[0].close()
         canvas = self.ax.figure.canvas
         for cid in self._cids:
             canvas.mpl_disconnect(cid)
-
-    def _cleanup_mpl_widgets(self):
-        """Safe cleanup of matplotlib widgets to prevent callback errors."""
-        if (
-            self._mpl_box_ax is not None
-            or self._mpl_button_ax is not None
-            or self._mpl_i_ax is not None
-            or self._mpl_j_ax is not None
-            or self._mpl_remove_ax is not None
-        ):
-            fig = self.ax.figure
-
-            # First, disconnect all widget events to prevent mouse grab conflicts
-            try:
-                if self._mpl_i_textbox is not None:
-                    self._mpl_i_textbox.disconnect_events()
-                if self._mpl_j_textbox is not None:
-                    self._mpl_j_textbox.disconnect_events()
-                if self._mpl_sigma_textbox is not None:
-                    self._mpl_sigma_textbox.disconnect_events()
-                if self._mpl_button is not None:
-                    # Button widgets don't have disconnect_events, but we can clear callbacks
-                    self._mpl_button.on_clicked(lambda x: None)
-                if self._mpl_remove_button is not None:
-                    # Clear remove button callbacks
-                    self._mpl_remove_button.on_clicked(lambda x: None)
-            except (AttributeError, Exception):
-                pass  # Some widgets might not have disconnect_events method
-
-            # Then remove the axes
-            try:
-                if self._mpl_i_ax is not None:
-                    fig.delaxes(self._mpl_i_ax)
-                if self._mpl_j_ax is not None:
-                    fig.delaxes(self._mpl_j_ax)
-                if self._mpl_sigma_ax is not None:
-                    fig.delaxes(self._mpl_sigma_ax)
-                if self._mpl_button_ax is not None:
-                    fig.delaxes(self._mpl_button_ax)
-                if self._mpl_remove_ax is not None:
-                    fig.delaxes(self._mpl_remove_ax)
-                # Legacy cleanup for old single textbox (if present)
-                if self._mpl_box_ax is not None and self._mpl_box_ax != self._mpl_i_ax:
-                    fig.delaxes(self._mpl_box_ax)
-            except Exception:
-                # Fallback cleanup
-                try:
-                    if self._mpl_i_ax is not None:
-                        self._mpl_i_ax.remove()
-                    if self._mpl_j_ax is not None:
-                        self._mpl_j_ax.remove()
-                    if self._mpl_sigma_ax is not None:
-                        self._mpl_sigma_ax.remove()
-                    if self._mpl_button_ax is not None:
-                        self._mpl_button_ax.remove()
-                    if self._mpl_remove_ax is not None:
-                        self._mpl_remove_ax.remove()
-                    if (
-                        self._mpl_box_ax is not None
-                        and self._mpl_box_ax != self._mpl_i_ax
-                    ):
-                        self._mpl_box_ax.remove()
-                except Exception:
-                    pass  # Ignore cleanup errors
-
-            # Reset all references
-            self._mpl_box_ax = self._mpl_button_ax = None
-            self._mpl_i_ax = self._mpl_j_ax = None
-            self._mpl_sigma_ax = None
-            self._mpl_remove_ax = None
-            self._mpl_textbox = self._mpl_button = None
-            self._mpl_i_textbox = self._mpl_j_textbox = None
-            self._mpl_sigma_textbox = None
-            self._mpl_remove_button = None
-            self._pending_tag_idx = None
 
     @property
     def xy(self) -> np.ndarray:
@@ -878,12 +478,21 @@ class PointPicker:
         filename: str,
         *,
         include_sigma: bool = False,
+        x_scale: float = 1.0,
     ) -> PointDict:
+        """Load points saved via :meth:`save_to_csv`, with optional x scaling.
+
+        Parameters
+        ----------
+        filename : str
+            CSV produced by :meth:`save_to_csv` in axis-lock mode.
+        include_sigma : bool, default ``False``
+            When ``True``, include the stored uncertainty per point.
+        x_scale : float, default ``1.0``
+            Multiply each x-coordinate by this factor while loading.
         """
-        Load points from a CSV file saved by PointPicker.save_to_csv (axis_lock mode).
-        data: dict[tuple[int, int], list[tuple[float, float] | tuple[float, float, Optional[float]]]] = {}
-        Set include_sigma=True to obtain sigma values when available.
-        """
+        if x_scale <= 0:
+            raise ValueError("x_scale must be positive.")
         data: dict[tuple[int, int], list] = {}
         with open(filename, newline="") as f:
             reader = csv.reader(f)
@@ -901,7 +510,7 @@ class PointPicker:
                     sigma_str = ""
                 i = int(i_str)
                 j = int(j_str)
-                x = float(x_str)
+                x = float(x_str) * x_scale
                 y = float(y_str)
                 sigma_val = float(sigma_str) if sigma_str.strip() else None
                 key = (i, j)
@@ -909,6 +518,37 @@ class PointPicker:
                     data.setdefault(key, []).append((x, y, sigma_val))
                 else:
                     data.setdefault(key, []).append((x, y))
+        return data
+
+    def to_transition_data(
+        self,
+        *,
+        include_sigma: bool = False,
+        x_scale: float = 1.0,
+    ) -> PointDict:
+        """Return picked points grouped by transition, scaling x if needed.
+
+        Parameters
+        ----------
+        include_sigma : bool, default ``False``
+            Include the stored uncertainty alongside each point.
+        x_scale : float, default ``1.0``
+            Multiply each x-coordinate before packaging the data.
+        """
+        if x_scale <= 0:
+            raise ValueError("x_scale must be positive.")
+        data: PointDict = {}
+        for (x, y), label, sigma in zip(self.points, self.labels, self.sigmas):
+            if label is None:
+                continue
+            scaled_x = float(x) * x_scale
+            entry: Union[Tuple[float, float], Tuple[float, float, Optional[float]]]
+            if include_sigma:
+                entry = (scaled_x, float(y), sigma if sigma is not None else None)
+            else:
+                entry = (scaled_x, float(y))
+            data.setdefault((int(label[0]), int(label[1])), []).append(entry)
+
         return data
 
     def save_project(self, filename: str = "pointpicker_project.npz"):
@@ -966,7 +606,10 @@ class PointPicker:
         return picker
 
     def to_dict(
-        self, *, include_sigma: bool = True
+        self,
+        *,
+        include_sigma: bool = True,
+        x_scale: float = 1.0,
     ) -> dict[
         tuple[int, int],
         list[tuple[float, float] | tuple[float, float, Optional[float]]],
@@ -976,6 +619,8 @@ class PointPicker:
         data: dict[tuple[int, int], list[tuple[float, float] | tuple[float, float, Optional[float]]]] = {}
         Set include_sigma=True to retrieve sigma values alongside coordinates.
         """
+        if x_scale <= 0:
+            raise ValueError("x_scale must be positive.")
         data: dict[tuple[int, int], list[tuple[float, float]]] = {}
         for (x, y), lab, sigma in zip(self.points, self.labels, self.sigmas):
             if lab is None:
@@ -984,11 +629,12 @@ class PointPicker:
                 key = tuple(int(val) for val in lab)
             else:
                 key = lab
+            x_val = float(x) * x_scale
             if include_sigma:
                 sigma_val = float(sigma) if sigma is not None else None
-                data.setdefault(key, []).append((float(x), float(y), sigma_val))
+                data.setdefault(key, []).append((x_val, float(y), sigma_val))
             else:
-                data.setdefault(key, []).append((float(x), float(y)))
+                data.setdefault(key, []).append((x_val, float(y)))
         return data
 
 
