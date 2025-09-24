@@ -261,20 +261,19 @@ class Circuit:
 
         data = np.sqrt(np.arange(1, dimension_bosonic))
         phi_op = phi_zpf_0 * diags([data, data], [1, -1]).toarray()
-        
+        gauge_invariant_phase_op = phi_op + phase_ext * np.eye(dimension_bosonic)
         # Calculate the nonlinear potential contributions. Keep phi_shift handy because
         # it is reused by multiple harmonic terms when present.
-        phi_shift = phi_op + phase_ext * np.eye(dimension_bosonic)
-        cos_phi = cosm(phi_shift)
+        cos_phi = cosm(gauge_invariant_phase_op)
         hamiltonian -= self.Ej * cos_phi
 
         if self.Ej_second != 0.0:
-            cos_2phi = cosm(2.0 * phi_shift)
+            cos_2phi = cosm(2.0 * gauge_invariant_phase_op)
             hamiltonian -= self.Ej_second * cos_2phi
 
         if return_coupling_ops:
             if self.has_fermionic_coupling:
-                cos_half_op = cosm(phi_op / 2)
+                cos_half_op = cosm(gauge_invariant_phase_op / 2)  # For fermionic coupling (includes phase_ext)
             else:
                 cos_half_op = None
 
