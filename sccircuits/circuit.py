@@ -152,17 +152,15 @@ class Circuit:
 
         data = np.sqrt(np.arange(1, dimension_bosonic))
         phi_op = phi_zpf_0 * diags([data, data], [1, -1]).toarray()
-        
+        gauge_invariant_phase_op = phi_op + phase_ext * np.eye(dimension_bosonic)
         # Calculate the full cosine operator for the hamiltonian
-        cos_full_op = cosm(phi_op + phase_ext * np.eye(dimension_bosonic))
+        cos_full_op = cosm(gauge_invariant_phase_op)
         hamiltonian -= self.Ej * cos_full_op
 
         if return_coupling_ops:
             # Calculate cos_half_op only when fermionic coupling is enabled
             if self.has_fermionic_coupling:
-                if phase_ext is not None:
-                    phi_op += phase_ext * np.eye(dimension_bosonic)
-                cos_half_op = cosm(phi_op / 2)  # For fermionic coupling (no phase_ext)
+                cos_half_op = cosm(gauge_invariant_phase_op / 2)  # For fermionic coupling (no phase_ext)
             else:
                 cos_half_op = None  # Not needed for purely bosonic systems
             
@@ -232,9 +230,8 @@ class Circuit:
                 dimension_bosonic = self.dimensions[0]
                 data = np.sqrt(np.arange(1, dimension_bosonic))
                 phi_op = self.non_linear_phase_zpf * diags([data, data], [1, -1]).toarray()
-                if phase_ext is not None:
-                    phi_op += phase_ext * np.eye(dimension_bosonic)
-                cos_half_op = cosm(phi_op / 2)
+                gauge_invariant_phase_op = phi_op + phase_ext * np.eye(dimension_bosonic)
+                cos_half_op = cosm(gauge_invariant_phase_op / 2)
                 next_coupling_op = None
             
             iterator.add_mode(
