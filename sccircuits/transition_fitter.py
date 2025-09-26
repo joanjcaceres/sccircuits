@@ -32,7 +32,7 @@ import numpy as np
 from IPython.display import clear_output
 from scipy import stats
 from scipy.linalg import eigh
-from scipy.optimize import least_squares
+from scipy.optimize import least_squares, differential_evolution
 
 Transition = Tuple[int, int]  # (i, j) with j > i
 
@@ -75,7 +75,7 @@ class TransitionFitter:
     * automatic normalisation of transition indices so ``(i, j)`` and ``(j, i)``
       refer to the same dataset;
     * caching of Hamiltonian diagonalisations per external parameter value;
-    * streamlined integration with SciPy's :func:`least_squares` optimiser;
+    * streamlined integration with SciPy's :func:`least_squares` and :func:`differential_evolution` optimisers;
     * rich post-fit diagnostics (statistics, residual analysis, history).
     """
 
@@ -135,6 +135,7 @@ class TransitionFitter:
         self._user_callback: Optional[Callable[[np.ndarray, np.ndarray], None]] = None
         self._last_evals_cache: Optional[Dict[float, np.ndarray]] = None
         self._last_jac_cache: Optional[Dict[float, np.ndarray]] = None
+        self._method: Optional[str] = None
 
     @staticmethod
     def _transition_freq(evals: np.ndarray, i: int, j: int) -> float:
@@ -191,7 +192,7 @@ class TransitionFitter:
         ):
             self.history.append((params.copy(), res.copy()))
             self._last_recorded_params = params.copy()
-            if self._verbose:
+            if self._verbose and self._method != 'differential_evolution':
                 # clear the previous output to avoid flooding the notebook
                 clear_output(wait=True)
                 print(
@@ -208,6 +209,7 @@ class TransitionFitter:
         bounds: Optional[Tuple[Sequence[float], Sequence[float]]] = None,
         verbose: int = 0,
         callback: Optional[Callable[[np.ndarray, np.ndarray], None]] = None,
+        method: str = 'least_squares',
         **kwargs,
     ):
         """Perform a nonlinear least-squares fit for the supplied data.
@@ -225,20 +227,22 @@ class TransitionFitter:
         callback : callable, optional
             Function invoked with ``(params, residuals)`` whenever a new
             parameter vector is recorded.
+        method : str, default 'least_squares'
+            Optimization method to use. Options: 'least_squares', 'differential_evolution'.
         **kwargs
-            Additional keyword arguments forwarded directly to
-            :func:`least_squares`.
+            Additional keyword arguments forwarded directly to the chosen optimizer.
 
         Returns
         -------
         scipy.optimize.OptimizeResult
-            Optimisation result from :func:`least_squares`.
+            Optimisation result from the chosen optimizer.
         """
         # Reset history and callback state
         self.history = []
         self._last_recorded_params = None
         self._verbose = verbose
         self._user_callback = callback
+        self._method = method
 
         if params_initial is not None:
             initial = np.asarray(params_initial, dtype=float)
@@ -257,9 +261,15 @@ class TransitionFitter:
                     f" {initial}"
                 )
 
-        jac_callable = self.jacobian if self.jacobian_func is not None else None
-
-        result = self._fit_least_squares(initial, bounds, verbose, jac_callable, **kwargs)
+        if method == 'least_squares':
+            jac_callable = self.jacobian if self.jacobian_func is not None else None
+            result = self._fit_least_squares(initial, bounds, verbose, jac_callable, **kwargs)
+        elif method == 'differential_evolution':
+            if bounds is None:
+                raise ValueError("bounds must be provided when using differential_evolution")
+            result = self._fit_differential_evolution(initial, bounds, verbose, **kwargs)
+        else:
+            raise ValueError(f"Unknown method: {method}")
         self.result = result
         return result
 
@@ -277,6 +287,41 @@ class TransitionFitter:
         if jac_callable is not None:
             ls_kwargs["jac"] = jac_callable
         return least_squares(self.residuals, initial, verbose=verbose, **ls_kwargs)
+
+    def _fit_differential_evolution(
+        self,
+        initial: np.ndarray,
+        bounds: Tuple[Sequence[float], Sequence[float]],
+        verbose: int,
+        **de_kwargs,
+    ):
+        def cost_func(params):
+            res = self.residuals(params)
+            return np.sum(res**2)
+
+        # Convert bounds format for DE: from ((lower,), (upper,)) to [(l1,u1), (l2,u2), ...]
+        lower, upper = bounds
+        bounds_de = list(zip(lower, upper))
+
+        # Callback for verbose output
+        de_callback = None
+        if verbose > 0:
+            gen_count = 0
+            def de_callback(x, convergence):
+                nonlocal gen_count
+                gen_count += 1
+                cost = cost_func(x)
+                residual_norm = np.sqrt(cost)
+                print(f"DE Gen {gen_count}: params = {x}, residual_norm = {residual_norm}")
+
+        # Set defaults for DE
+        de_kwargs.setdefault('maxiter', 1000)
+        de_kwargs.setdefault('popsize', 15)
+        if verbose > 0:
+            de_kwargs['disp'] = False  # Disable default disp, use our callback
+            de_kwargs['callback'] = de_callback
+
+        return differential_evolution(cost_func, bounds=bounds_de, **de_kwargs)
 
     def _evaluate_eigen_derivatives(
         self, phi_ext: float, params: np.ndarray
@@ -309,7 +354,6 @@ class TransitionFitter:
 
         return np.vstack(jac_rows)
 
-    # differential-evolution-based helpers have been removed for simplicity.
 
     def get_theoretical_curve(
         self,
@@ -459,7 +503,7 @@ class TransitionFitter:
             "degrees_of_freedom": dof,
             "n_data_points": n_data_points,
             "n_parameters": n_params,
-            "cost": float(self.result.cost),
+            "cost": float(getattr(self.result, 'cost', self.result.fun)),
         }
 
     def get_residual_analysis(self) -> dict:
@@ -813,7 +857,7 @@ class TransitionFitter:
 
         return {
             "fit_info": {
-                "optimizer": "least_squares",
+                "optimizer": self._method,
                 "success": self.result.success
                 if hasattr(self.result, "success")
                 else True,
@@ -858,14 +902,15 @@ class TransitionFitter:
         print("=" * 60)
 
         # Basic fit info
-        print("Optimizer: least_squares")
+        print(f"Optimizer: {self._method}")
         print(f"Success: {getattr(self.result, 'success', 'Unknown')}")
         print(f"Function evaluations: {getattr(self.result, 'nfev', 'N/A')}")
 
         # Parameters
         print(f"\nPARAMETERS ({len(self.result.x)} total):")
+        std_errors = uncertainty.get("standard_errors")
         for i, param in enumerate(self.result.x):
-            std_err = uncertainty.get("standard_errors", [None] * len(self.result.x))[i]
+            std_err = std_errors[i] if std_errors is not None else None
             if std_err is not None:
                 print(f"  p[{i}] = {param:.6g} ± {std_err:.3g}")
             else:
@@ -1078,6 +1123,21 @@ if __name__ == "__main__":
 
     # Print formatted summary
     fitter.print_fit_summary()
+
+    print("\n" + "=" * 60)
+
+    # Example 1b: Fit with differential_evolution
+    print("1b. Fit with differential_evolution:")
+    fitter_de = TransitionFitter(
+        model_func=example_hamiltonian,
+        data=data_example,
+    )
+    result_de = fitter_de.fit(
+        bounds=([0.0, 5.0], [5.0, 15.0]), method='differential_evolution', verbose=1
+    )
+
+    # Print formatted summary
+    fitter_de.print_fit_summary()
 
     print("\n" + "=" * 60)
 
