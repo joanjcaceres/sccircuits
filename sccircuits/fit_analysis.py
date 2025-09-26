@@ -64,7 +64,8 @@ class FitAnalysis:
     >>> res = least_squares(residuals, [1, 1], args=(x, y))
     >>> analysis = FitAnalysis(res)
     >>> print(f"Chi-squared reduced: {analysis.chi2_reduced:.3f}")
-    >>> analysis.plot_correlation()
+    >>> analysis.plot_correlation()  # heatmap with annotations
+    >>> analysis.plot_correlation(annotate_values=False)  # heatmap without annotations
     """
 
     def __init__(self, res, parameter_labels=None):
@@ -113,10 +114,10 @@ class FitAnalysis:
             self.parameter_labels = parameter_labels
 
     def plot_correlation(
-        self, fig=None, ax=None, mask_upper=True, cmap="RdBu", vmin=-1, vmax=1
+        self, fig=None, ax=None, mask_upper=True, cmap="RdBu", vmin=-1, vmax=1, annotate_values=True
     ):
         """
-        Plot the correlation matrix as a heatmap.
+        Plot the correlation matrix as a heatmap with optional value annotations.
 
         Parameters
         ----------
@@ -130,6 +131,8 @@ class FitAnalysis:
             Colormap for the heatmap.
         vmin, vmax : float, optional
             Colorbar limits.
+        annotate_values : bool, optional
+            If True, annotates each cell with its correlation value.
 
         Returns
         -------
@@ -151,6 +154,18 @@ class FitAnalysis:
         ax.set_yticks(range(self.n_params))
         ax.set_xticklabels(self.parameter_labels, rotation=45, ha="right")
         ax.set_yticklabels(self.parameter_labels)
+
+        # Add value annotations if requested
+        if annotate_values:
+            for i in range(self.n_params):
+                for j in range(self.n_params):
+                    if not mask_upper or i >= j:  # Only annotate lower triangle + diagonal if masked
+                        value = self.correlation[i, j]
+                        # Choose text color based on background intensity
+                        text_color = 'white' if abs(value) > 0.5 else 'black'
+                        ax.text(j, i, f'{value:.2f}',
+                               ha='center', va='center',
+                               color=text_color, fontweight='bold', fontsize=8)
 
         return fig, ax
 
