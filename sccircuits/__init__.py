@@ -22,12 +22,12 @@ __email__ = "contact@joancaceres.com"
 
 # Core circuit analysis classes
 from .circuit import Circuit
-from .CircuitFitter import CircuitFitter
 from .bbq import BBQ
 
 # Fitting and analysis tools
 from .transition_fitter import TransitionFitter
 from .pointpicker import PointPicker
+from .fit_analysis import FitAnalysis
 
 # Numerical utilities
 from .iterative_diagonalizer import IterativeHamiltonianDiagonalizer
@@ -37,13 +37,13 @@ from .utilities import lanczos_krylov
 __all__ = [
     # Core classes
     "Circuit",
-    "CircuitFitter", 
     "BBQ",
     
     # Analysis tools
     "TransitionFitter",
     "PointPicker",
-    
+    "FitAnalysis",
+
     # Utilities
     "IterativeHamiltonianDiagonalizer",
     "lanczos_krylov",
