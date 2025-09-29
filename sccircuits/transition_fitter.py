@@ -27,6 +27,7 @@ This module depends on :mod:`numpy` and :mod:`scipy` (≥1.10).
 
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+import json
 
 import numpy as np
 from IPython.display import clear_output
@@ -427,62 +428,6 @@ class TransitionFitter:
 
         return self._cached_base_data
 
-    def save_results_csv(self, filepath: str):
-        """
-        Save basic fit results to a CSV file.
-
-        NOTE: This method saves only basic information. For complete analysis
-        capabilities, consider using pickle serialization to preserve the
-        full result object with Jacobian, convergence history, etc.
-
-        Columns: transition_i, transition_j, phi_ext, experimental, theoretical, residual, sigma
-        """
-        if self.result is None:
-            raise RuntimeError("No fit has been run yet. Call fit() first.")
-        import csv
-
-        with open(filepath, mode="w", newline="") as csvfile:
-            writer = csv.writer(csvfile)
-            # Write fit summary (parameters and cost)
-            writer.writerow(["# TransitionFitter Results (Basic)"])
-            writer.writerow(["# For complete analysis, use pickle serialization"])
-            writer.writerow(["params"] + [str(p) for p in self.result.x.tolist()])
-            writer.writerow(["cost", str(self.result.cost)])
-            # Blank line before data
-            writer.writerow([])
-            # Header row
-            writer.writerow(
-                [
-                    "transition_i",
-                    "transition_j",
-                    "phi_ext",
-                    "experimental",
-                    "theoretical",
-                    "residual",
-                    "sigma",
-                ]
-            )
-            # Data rows
-            for transition, dps in self.data.items():
-                i, j = transition
-                phi_values = [dp.phi_ext for dp in dps]
-                theo_values = self.get_theoretical_curve(transition, phi_values)
-                for dp, tv in zip(dps, theo_values):
-                    writer.writerow(
-                        [
-                            i,
-                            j,
-                            dp.phi_ext,
-                            dp.value,
-                            float(tv),
-                            float(tv - dp.value),
-                            dp.sigma if dp.sigma is not None else self.DEFAULT_SIGMA,
-                        ]
-                    )
-        print(f"Basic results saved to CSV file: {filepath}")
-        print(
-            "Note: For complete analysis (uncertainties, convergence, etc.), use pickle serialization."
-        )
 
     def save_complete_result(self, filepath: str):
         """
@@ -544,6 +489,29 @@ class TransitionFitter:
             print("Warning: No fit result found in loaded data.")
 
         return fitter
+
+    @classmethod
+    def load_from_json(cls, filename: str) -> Dict[Transition, Sequence[Union[DataPoint, Tuple[float, float]]]]:
+        """
+        Load experimental data from a JSON file.
+
+        Parameters
+        ----------
+        filename : str
+            Path to the JSON file containing data in the format saved by PointPicker.save_json.
+
+        Returns
+        -------
+        dict
+            Data dictionary suitable for TransitionFitter.__init__.
+        """
+        with open(filename, 'r') as f:
+            json_data = json.load(f)
+        data = {}
+        for key_str, points in json_data["data"].items():
+            i, j = map(int, key_str.split(','))
+            data[(i, j)] = points
+        return data
 
 
 # ---------------- Example Usage ----------------
