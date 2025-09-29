@@ -1,7 +1,6 @@
-import csv
-import io
+import json
 from typing import Dict, List, Optional, Tuple, Union
-import matplotlib.image as mpimg
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -10,7 +9,7 @@ try:  # pragma: no cover - fallback when run as a script
 except ImportError:  # pragma: no cover
     from _pointpicker_tagui import BaseTagUI, create_tag_ui  # type: ignore
 
-# Type alias for load_csv_to_dict return type
+# Type alias for data return type
 PointDict = Dict[
     Tuple[int, int],
     List[Union[Tuple[float, float], Tuple[float, float, Optional[float]]]],
@@ -45,7 +44,7 @@ class PointPicker:
     • While the Matplotlib toolbar is in *zoom* or *pan* mode, clicks are **ignored**.
     • Pick radius can be tuned via *pick_radius* (in display pixels).
     • Works with multiple images/plots in the same axes.
-    • save_project("file.npz") (incl. snapshot de la figura) y load_project(ax,"file.npz") para retomarlo.
+    • save_json("file.json") y load_json(ax,"file.json") para guardar/cargar datos.
 
     Example
     -------
@@ -54,7 +53,7 @@ class PointPicker:
     >>> ax.contour(img2)
     >>> picker = PointPicker(ax)
     >>> plt.show()          # interact with a/m/d/t keys + left clicks
-    >>> picker.save_to_csv('my_points.csv')
+    >>> picker.save_json('my_points.json')
     >>> x_coords, y_coords = picker.get_coordinates()
     """
 
@@ -424,101 +423,6 @@ class PointPicker:
             sigma_str = f"{sigma_val:6.3f}" if sigma_val is not None else "      "
             print(f"{idx:3d} | {i:3s} | {j:3s} | {x:8.4f} | {y:8.4f} | {sigma_str}")
 
-    def save_to_csv(self, filename: str = "picked_points.csv"):
-        """Save points to CSV.
-
-        • Standard mode → columns: x, y
-        • Axis‑lock mode  → columns: i, j, x, y (labels optional, rows sorted)
-        """
-        if self.points.shape[0] == 0:
-            print("No points to save.")
-            return
-
-        if not self.axis_lock:
-            # Legacy behaviour
-            with open(filename, "w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(["x", "y", "sigma"])
-                for (x, y), sigma in zip(self.points, self.sigmas):
-                    writer.writerow(
-                        [
-                            float(x),
-                            float(y),
-                            "" if sigma is None else float(sigma),
-                        ]
-                    )
-            print(f"Saved {self.points.shape[0]} points to {filename}")
-            return
-
-        # Axis‑lock: include labels & order
-        records: list[tuple[int | str, int | str, float, float]] = []
-        for (x, y), lab, sigma in zip(self.points, self.labels, self.sigmas):
-            sigma_entry: float | str = "" if sigma is None else float(sigma)
-            if lab is None:
-                records.append(("", "", float(x), float(y), sigma_entry))
-            else:
-                records.append((lab[0], lab[1], float(x), float(y), sigma_entry))
-        # Sort by label (ints first; unlabeled last) then by y
-        records.sort(
-            key=lambda r: (
-                r[0] if isinstance(r[0], int) else float("inf"),
-                r[1] if isinstance(r[1], int) else float("inf"),
-                r[3],
-            )
-        )
-
-        with open(filename, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["i", "j", "x", "y", "sigma"])
-            writer.writerows(records)
-        print(f"Saved {len(records)} points to {filename}")
-
-    @staticmethod
-    def load_csv_to_dict(
-        filename: str,
-        *,
-        include_sigma: bool = False,
-        x_scale: float = 1.0,
-    ) -> PointDict:
-        """Load points saved via :meth:`save_to_csv`, with optional x scaling.
-
-        Parameters
-        ----------
-        filename : str
-            CSV produced by :meth:`save_to_csv` in axis-lock mode.
-        include_sigma : bool, default ``False``
-            When ``True``, include the stored uncertainty per point.
-        x_scale : float, default ``1.0``
-            Multiply each x-coordinate by this factor while loading.
-        """
-        if x_scale <= 0:
-            raise ValueError("x_scale must be positive.")
-        data: dict[tuple[int, int], list] = {}
-        with open(filename, newline="") as f:
-            reader = csv.reader(f)
-            header = next(reader)
-            has_sigma = header == ["i", "j", "x", "y", "sigma"]
-            if not has_sigma and header != ["i", "j", "x", "y"]:
-                raise ValueError(
-                    f"Expected header ['i','j','x','y'] or ['i','j','x','y','sigma'], got {header}"
-                )
-            for row in reader:
-                if has_sigma:
-                    i_str, j_str, x_str, y_str, sigma_str = row
-                else:
-                    i_str, j_str, x_str, y_str = row
-                    sigma_str = ""
-                i = int(i_str)
-                j = int(j_str)
-                x = float(x_str) * x_scale
-                y = float(y_str)
-                sigma_val = float(sigma_str) if sigma_str.strip() else None
-                key = (i, j)
-                if include_sigma:
-                    data.setdefault(key, []).append((x, y, sigma_val))
-                else:
-                    data.setdefault(key, []).append((x, y))
-        return data
 
     def to_transition_data(
         self,
@@ -551,57 +455,82 @@ class PointPicker:
 
         return data
 
-    def save_project(self, filename: str = "pointpicker_project.npz"):
+    def save_json(self, filename: str = "pointpicker_data.json", *, include_sigma: bool = True, x_scale: float = 1.0):
         """
-        Save the current points, labels, and optionally a snapshot of the figure to a compressed .npz file.
+        Save the current points and labels to a JSON file.
 
-        Args:
-            filename (str): Output filename (.npz).
+        Parameters
+        ----------
+        filename : str, default "pointpicker_data.json"
+            Output filename (.json).
+        include_sigma : bool, default True
+            Include sigma values in the data.
+        x_scale : float, default 1.0
+            Scale factor for x-coordinates.
         """
-
-        np.savez(
-            filename,
-            points=self.points,
-            labels=np.array(self.labels, dtype=object),
-            sigmas=np.array(self.sigmas, dtype=object),
-            axis_lock=self.axis_lock,
-        )
-        print(f"Project saved to {filename}")
+        if x_scale <= 0:
+            raise ValueError("x_scale must be positive.")
+        data_dict = self.to_dict(include_sigma=include_sigma, x_scale=x_scale)
+        json_data = {
+            "metadata": {
+                "format_version": "1.0",
+                "axis_lock": self.axis_lock,
+                "x_scale": x_scale,
+                "include_sigma": include_sigma,
+                "description": "PointPicker data export"
+            },
+            "data": {f"{k[0]},{k[1]}": list(v) for k, v in data_dict.items()}
+        }
+        with open(filename, 'w') as f:
+            json.dump(json_data, f, indent=2)
+        print(f"Data saved to {filename}")
 
     @classmethod
-    def load_project(cls, ax: plt.Axes, filename: str = "pointpicker_project.npz"):
+    def load_json(cls, ax: plt.Axes, filename: str = "pointpicker_data.json"):
         """
-        Load a project file saved by save_project. Restores points, labels, axis_lock, and (if present) shows a snapshot image.
+        Load points and labels from a JSON file saved by save_json.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes
+            The axes to plot on.
+        filename : str, default "pointpicker_data.json"
+            Input filename (.json).
+
+        Returns
+        -------
+        PointPicker
+            Loaded PointPicker instance.
         """
-        data = np.load(filename, allow_pickle=True)
-        picker = cls(ax, axis_lock=bool(data["axis_lock"]))
-        picker.points = np.array(data["points"])
-        picker.labels = list(data["labels"])
-        if "sigmas" in data.files:
-            picker.sigmas = []
-            for val in data["sigmas"]:
-                if val is None:
-                    picker.sigmas.append(None)
-                    continue
-                if isinstance(val, str):
-                    val = val.strip()
-                    if val == "":
-                        picker.sigmas.append(None)
-                        continue
-                try:
-                    picker.sigmas.append(float(val))
-                except Exception:
-                    picker.sigmas.append(None)
-        else:
-            picker.sigmas = [None] * len(picker.points)
+        with open(filename, 'r') as f:
+            json_data = json.load(f)
+        metadata = json_data.get("metadata", {})
+        axis_lock = metadata.get("axis_lock", False)
+        picker = cls(ax, axis_lock=axis_lock)
+        data = json_data["data"]
+        points_list = []
+        labels_list = []
+        sigmas_list = []
+        for key_str, points in data.items():
+            i, j = map(int, key_str.split(','))
+            for point in points:
+                if len(point) == 2:
+                    x, y = point
+                    sigma = None
+                elif len(point) == 3:
+                    x, y, sigma = point
+                else:
+                    raise ValueError(f"Invalid point format in {key_str}: {point}")
+                points_list.append([x, y])
+                labels_list.append((i, j))
+                sigmas_list.append(sigma)
+        picker.points = np.array(points_list)
+        picker.labels = labels_list
+        picker.sigmas = sigmas_list
         for idx, (x, y) in enumerate(picker.points):
             (marker,) = ax.plot(x, y, "o", markersize=6)
             picker._markers.append(marker)
             picker._set_marker_color(idx)
-        if "figure" in data.files and data["figure"].size > 0:
-            buf = io.BytesIO(data["figure"].tobytes())
-            img = mpimg.imread(buf, format="png")
-            ax.imshow(img)
         ax.figure.canvas.draw_idle()
         return picker
 
@@ -660,4 +589,4 @@ if __name__ == "__main__":
 
     # Example of saving the points to a custom file name
     if picker.xy.any():
-        picker.save_to_csv("my_picked_points.csv")
+        picker.save_json("my_picked_points.json")
