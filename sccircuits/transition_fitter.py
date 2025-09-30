@@ -27,7 +27,10 @@ This module depends on :mod:`numpy` and :mod:`scipy` (≥1.10).
 
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
-import json
+try:
+    import yaml
+except ImportError:
+    import json as yaml
 
 import numpy as np
 from IPython.display import clear_output
@@ -491,14 +494,14 @@ class TransitionFitter:
         return fitter
 
     @classmethod
-    def load_from_json(cls, filename: str) -> Dict[Transition, Sequence[Union[DataPoint, Tuple[float, float]]]]:
+    def load_from_yaml(cls, filename: str) -> Dict[Transition, Sequence[Union[DataPoint, Tuple[float, float]]]]:
         """
-        Load experimental data from a JSON file.
+        Load experimental data from a YAML file.
 
         Parameters
         ----------
         filename : str
-            Path to the JSON file containing data in the format saved by PointPicker.save_json.
+            Path to the YAML file containing data in the format saved by PointPicker.save_yaml.
 
         Returns
         -------
@@ -506,9 +509,9 @@ class TransitionFitter:
             Data dictionary suitable for TransitionFitter.__init__.
         """
         with open(filename, 'r') as f:
-            json_data = json.load(f)
+            yaml_data = yaml.safe_load(f)
         data = {}
-        for key_str, points in json_data["data"].items():
+        for key_str, points in yaml_data["data"].items():
             i, j = map(int, key_str.split(','))
             data[(i, j)] = points
         return data
