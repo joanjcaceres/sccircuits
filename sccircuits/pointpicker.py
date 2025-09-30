@@ -1,4 +1,7 @@
-import json
+try:
+    import yaml
+except ImportError:
+    import json as yaml
 from typing import Dict, List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
@@ -44,7 +47,7 @@ class PointPicker:
     • While the Matplotlib toolbar is in *zoom* or *pan* mode, clicks are **ignored**.
     • Pick radius can be tuned via *pick_radius* (in display pixels).
     • Works with multiple images/plots in the same axes.
-    • save_json("file.json") y load_json(ax,"file.json") para guardar/cargar datos.
+    • save_yaml("file.yaml") y load_yaml(ax,"file.yaml") para guardar/cargar datos.
 
     Example
     -------
@@ -53,7 +56,7 @@ class PointPicker:
     >>> ax.contour(img2)
     >>> picker = PointPicker(ax)
     >>> plt.show()          # interact with a/m/d/t keys + left clicks
-    >>> picker.save_json('my_points.json')
+    >>> picker.save_yaml('my_points.yaml')
     >>> x_coords, y_coords = picker.get_coordinates()
     """
 
@@ -455,14 +458,14 @@ class PointPicker:
 
         return data
 
-    def save_json(self, filename: str = "pointpicker_data.json", *, include_sigma: bool = True, x_scale: float = 1.0):
+    def save_yaml(self, filename: str = "pointpicker_data.yaml", *, include_sigma: bool = True, x_scale: float = 1.0):
         """
-        Save the current points and labels to a JSON file.
+        Save the current points and labels to a YAML file.
 
         Parameters
         ----------
-        filename : str, default "pointpicker_data.json"
-            Output filename (.json).
+        filename : str, default "pointpicker_data.yaml"
+            Output filename (.yaml).
         include_sigma : bool, default True
             Include sigma values in the data.
         x_scale : float, default 1.0
@@ -471,7 +474,7 @@ class PointPicker:
         if x_scale <= 0:
             raise ValueError("x_scale must be positive.")
         data_dict = self.to_dict(include_sigma=include_sigma, x_scale=x_scale)
-        json_data = {
+        yaml_data = {
             "metadata": {
                 "format_version": "1.0",
                 "axis_lock": self.axis_lock,
@@ -479,23 +482,23 @@ class PointPicker:
                 "include_sigma": include_sigma,
                 "description": "PointPicker data export"
             },
-            "data": {f"{k[0]},{k[1]}": list(v) for k, v in data_dict.items()}
+            "data": {f"{k[0]},{k[1]}": [list(point) for point in v] for k, v in data_dict.items()}
         }
         with open(filename, 'w') as f:
-            json.dump(json_data, f, indent=2)
+            yaml.dump(yaml_data, f, default_flow_style=False)
         print(f"Data saved to {filename}")
 
     @classmethod
-    def load_json(cls, ax: plt.Axes, filename: str = "pointpicker_data.json"):
+    def load_yaml(cls, ax: plt.Axes, filename: str = "pointpicker_data.yaml"):
         """
-        Load points and labels from a JSON file saved by save_json.
+        Load points and labels from a YAML file saved by save_yaml.
 
         Parameters
         ----------
         ax : matplotlib.axes.Axes
             The axes to plot on.
-        filename : str, default "pointpicker_data.json"
-            Input filename (.json).
+        filename : str, default "pointpicker_data.yaml"
+            Input filename (.yaml).
 
         Returns
         -------
@@ -503,11 +506,11 @@ class PointPicker:
             Loaded PointPicker instance.
         """
         with open(filename, 'r') as f:
-            json_data = json.load(f)
-        metadata = json_data.get("metadata", {})
+            yaml_data = yaml.safe_load(f)
+        metadata = yaml_data.get("metadata", {})
         axis_lock = metadata.get("axis_lock", False)
         picker = cls(ax, axis_lock=axis_lock)
-        data = json_data["data"]
+        data = yaml_data["data"]
         points_list = []
         labels_list = []
         sigmas_list = []
@@ -589,4 +592,4 @@ if __name__ == "__main__":
 
     # Example of saving the points to a custom file name
     if picker.xy.any():
-        picker.save_json("my_picked_points.json")
+        picker.save_yaml("my_picked_points.yaml")
