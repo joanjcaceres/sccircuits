@@ -485,6 +485,134 @@ class Circuit:
             )
         return operators[name]
 
+    def optimize_dimensions_and_truncations(
+        self,
+        N: int,
+        tolerance: float,
+        initial_truncations: Sequence[int],
+        tolerance_type: str = 'max',
+        max_iterations: int = 100,
+        dimension_increment: int = 1,
+        truncation_increment: int = 1,
+        verbose: bool = False,
+    ) -> dict[str, Union[list[int], np.ndarray, int]]:
+        """
+        Optimize dimensions and truncations to achieve convergence of the first N eigenenergies.
+
+        This method iteratively increases the Hilbert-space dimensions and truncation levels
+        starting from the current instance's dimensions and the provided initial truncations,
+        until the deviation between consecutive iterations for the first N states is below
+        the specified tolerance.
+
+        Parameters
+        ----------
+        N : int
+            Number of eigenenergies to check for convergence.
+        tolerance : float
+            Tolerance for convergence. Deviation is computed as the maximum absolute difference
+            ('max') or the sum of absolute differences ('absolute_sum') between consecutive
+            iterations' energies.
+        initial_truncations : Sequence[int]
+            Initial truncation levels for each diagonalization step. Length must match the
+            number of modes (including fermionic if present).
+        tolerance_type : str, optional
+            Type of deviation calculation: 'max' (default) or 'absolute_sum'.
+        max_iterations : int, optional
+            Maximum number of iterations to perform. Default is 100.
+        dimension_increment : int, optional
+            Increment for dimensions per iteration. Default is 1.
+        truncation_increment : int, optional
+            Increment for truncations per iteration. Default is 1.
+        verbose : bool, optional
+            If True, print iteration details. Default is False.
+
+        Returns
+        -------
+        dict
+            Dictionary containing:
+            - 'dimensions': list of optimized dimensions
+            - 'truncations': list of optimized truncations
+            - 'energies': np.ndarray of the first N converged energies
+            - 'iterations': int, number of iterations performed
+
+        Raises
+        ------
+        ValueError
+            If inputs are invalid or convergence is not reached within max_iterations.
+        """
+        if N <= 0:
+            raise ValueError("N must be a positive integer.")
+        if tolerance <= 0:
+            raise ValueError("tolerance must be positive.")
+        if tolerance_type not in ['max', 'absolute_sum']:
+            raise ValueError("tolerance_type must be 'max' or 'absolute_sum'.")
+
+        expected_trunc_len = self.modes + (1 if self.has_fermionic_coupling else 0)
+        if len(initial_truncations) != expected_trunc_len:
+            raise ValueError(
+                f"initial_truncations must have length {expected_trunc_len} "
+                f"(modes: {self.modes}, fermionic: {self.has_fermionic_coupling})."
+            )
+
+        current_dims = list(self.dimensions)
+        current_truncs = list(initial_truncations)
+        prev_energies = None
+
+        for iteration in range(max_iterations):
+            # Create a new Circuit instance with current dimensions
+            new_circuit = Circuit(
+                non_linear_frequency=self.non_linear_frequency,
+                non_linear_phase_zpf=self.non_linear_phase_zpf,
+                dimensions=current_dims,
+                Ej=self.Ej,
+                linear_frequencies=self.linear_frequencies,
+                linear_couplings=self.linear_coupling,
+                Ej_second=self.Ej_second,
+                Gamma=self.Gamma,
+                epsilon_r=self.epsilon_r,
+                phase_ext=self.phase_ext,
+            )
+
+            # Copy harmonic modes store if present
+            if self._harmonic_modes_store is not None:
+                new_circuit._store_harmonic_modes(
+                    self._harmonic_modes_store["frequencies"],
+                    self._harmonic_modes_store["phase_zpf"]
+                )
+
+            energies, _ = new_circuit.eigensystem(truncation=current_truncs)
+            energies_N = energies[:N]
+
+            if prev_energies is not None:
+                diff = np.abs(energies_N - prev_energies)
+                if tolerance_type == 'max':
+                    deviation = np.max(diff)
+                else:
+                    deviation = np.sum(diff)
+
+                if verbose:
+                    print(f"Iteration {iteration}: deviation = {deviation:.2e}")
+
+                if deviation < tolerance:
+                    if verbose:
+                        print(f"Converged at iteration {iteration}")
+                    return {
+                        'dimensions': current_dims,
+                        'truncations': current_truncs,
+                        'energies': energies_N,
+                        'iterations': iteration,
+                    }
+
+            prev_energies = energies_N.copy()
+
+            # Increase dimensions and truncations
+            current_dims = [d + dimension_increment for d in current_dims]
+            current_truncs = [t + truncation_increment for t in current_truncs]
+
+        if verbose:
+            print(f"Did not converge within {max_iterations} iterations")
+        raise ValueError(f"Did not converge within {max_iterations} iterations")
+
     def parameter_names(self) -> list[str]:
         """Return the ordered list of physical parameters used by the circuit."""
         names = ["non_linear_frequency", "non_linear_phase_zpf", "Ej", "Ej_second"]
