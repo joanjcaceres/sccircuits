@@ -557,6 +557,9 @@ class Circuit:
         current_dims = list(self.dimensions)
         current_truncs = list(initial_truncations)
         prev_energies = None
+        converged = False
+        converged_energies = None
+        convergence_iteration = None
 
         for iteration in range(max_iterations):
             # Create a new Circuit instance with current dimensions
@@ -594,14 +597,12 @@ class Circuit:
                     print(f"Iteration {iteration}: deviation = {deviation:.2e}")
 
                 if deviation < tolerance:
+                    converged = True
+                    converged_energies = energies_N.copy()
+                    convergence_iteration = iteration
                     if verbose:
                         print(f"Converged at iteration {iteration}")
-                    return {
-                        'dimensions': current_dims,
-                        'truncations': current_truncs,
-                        'energies': energies_N,
-                        'iterations': iteration,
-                    }
+                    break
 
             prev_energies = energies_N.copy()
 
@@ -609,9 +610,62 @@ class Circuit:
             current_dims = [d + dimension_increment for d in current_dims]
             current_truncs = [t + truncation_increment for t in current_truncs]
 
-        if verbose:
-            print(f"Did not converge within {max_iterations} iterations")
-        raise ValueError(f"Did not converge within {max_iterations} iterations")
+        if not converged:
+            if verbose:
+                print(f"Did not converge within {max_iterations} iterations")
+            raise ValueError(f"Did not converge within {max_iterations} iterations")
+
+        # Minimize truncations by reducing each mode step-by-step
+        for i in range(len(current_truncs)):
+            min_trunc = 2 if i == 0 and self.has_fermionic_coupling else 1
+            while current_truncs[i] > min_trunc:
+                temp_truncs = current_truncs.copy()
+                temp_truncs[i] -= truncation_increment
+                if temp_truncs[i] < min_trunc:
+                    break
+
+                # Create circuit with reduced truncation
+                new_circuit = Circuit(
+                    non_linear_frequency=self.non_linear_frequency,
+                    non_linear_phase_zpf=self.non_linear_phase_zpf,
+                    dimensions=current_dims,
+                    Ej=self.Ej,
+                    linear_frequencies=self.linear_frequencies,
+                    linear_couplings=self.linear_coupling,
+                    Ej_second=self.Ej_second,
+                    Gamma=self.Gamma,
+                    epsilon_r=self.epsilon_r,
+                    phase_ext=self.phase_ext,
+                )
+                if self._harmonic_modes_store is not None:
+                    new_circuit._store_harmonic_modes(
+                        self._harmonic_modes_store["frequencies"],
+                        self._harmonic_modes_store["phase_zpf"]
+                    )
+
+                energies, _ = new_circuit.eigensystem(truncation=temp_truncs)
+                if len(energies) < N:
+                    break  # Cannot reduce further, not enough states
+                energies_N = energies[:N]
+                diff = np.abs(energies_N - converged_energies)
+                if tolerance_type == 'max':
+                    deviation = np.max(diff)
+                else:
+                    deviation = np.sum(diff)
+
+                if deviation < tolerance:
+                    current_truncs = temp_truncs
+                    if verbose:
+                        print(f"Reduced truncation {i} to {current_truncs[i]}")
+                else:
+                    break  # Cannot reduce further for this mode
+
+        return {
+            'dimensions': current_dims,
+            'truncations': current_truncs,
+            'energies': converged_energies,
+            'iterations': convergence_iteration,
+        }
 
     def parameter_names(self) -> list[str]:
         """Return the ordered list of physical parameters used by the circuit."""
