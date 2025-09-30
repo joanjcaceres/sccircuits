@@ -594,7 +594,7 @@ class Circuit:
                     deviation = np.sum(diff)
 
                 if verbose:
-                    print(f"Iteration {iteration}: deviation = {deviation:.2e}")
+                    print(f"Iteration {iteration}: dims {current_dims}, truncs {current_truncs}, deviation {deviation:.2e}")
 
                 if deviation < tolerance:
                     converged = True
@@ -656,7 +656,53 @@ class Circuit:
                 if deviation < tolerance:
                     current_truncs = temp_truncs
                     if verbose:
-                        print(f"Reduced truncation {i} to {current_truncs[i]}")
+                        print(f"Minimizing truncation {i}: dims {current_dims}, truncs {current_truncs}, deviation {deviation:.2e}")
+                else:
+                    break  # Cannot reduce further for this mode
+
+        # Minimize dimensions
+        for i in range(len(current_dims)):
+            if verbose:
+                print(f"Checking dimension minimization for mode {i}: current_dim {current_dims[i]}, current_trunc {current_truncs[i]}")
+            while current_dims[i] > current_truncs[i]:
+                temp_dims = current_dims.copy()
+                temp_dims[i] -= dimension_increment
+                if temp_dims[i] == current_dims[i] or temp_dims[i] < current_truncs[i]:
+                    break
+
+                # Create circuit with reduced dimension
+                new_circuit = Circuit(
+                    non_linear_frequency=self.non_linear_frequency,
+                    non_linear_phase_zpf=self.non_linear_phase_zpf,
+                    dimensions=temp_dims,
+                    Ej=self.Ej,
+                    linear_frequencies=self.linear_frequencies,
+                    linear_couplings=self.linear_coupling,
+                    Ej_second=self.Ej_second,
+                    Gamma=self.Gamma,
+                    epsilon_r=self.epsilon_r,
+                    phase_ext=self.phase_ext,
+                )
+                if self._harmonic_modes_store is not None:
+                    new_circuit._store_harmonic_modes(
+                        self._harmonic_modes_store["frequencies"],
+                        self._harmonic_modes_store["phase_zpf"]
+                    )
+
+                energies, _ = new_circuit.eigensystem(truncation=current_truncs)
+                if len(energies) < N:
+                    break
+                energies_N = energies[:N]
+                diff = np.abs(energies_N - converged_energies)
+                if tolerance_type == 'max':
+                    deviation = np.max(diff)
+                else:
+                    deviation = np.sum(diff)
+
+                if deviation < tolerance:
+                    current_dims = temp_dims
+                    if verbose:
+                        print(f"Minimizing dimension {i}: dims {current_dims}, truncs {current_truncs}, deviation {deviation:.2e}")
                 else:
                     break  # Cannot reduce further for this mode
 
