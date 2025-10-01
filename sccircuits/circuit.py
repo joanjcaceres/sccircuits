@@ -485,6 +485,234 @@ class Circuit:
             )
         return operators[name]
 
+    def optimize_dimensions_and_truncations(
+        self,
+        N: int,
+        tolerance: float,
+        initial_truncations: Sequence[int],
+        tolerance_type: str = 'max',
+        max_iterations: int = 100,
+        dimension_increment: int = 1,
+        truncation_increment: int = 1,
+        verbose: bool = False,
+    ) -> dict[str, Union[list[int], np.ndarray, int]]:
+        """
+        Optimize dimensions and truncations to achieve convergence of the first N eigenenergies.
+
+        This method iteratively increases the Hilbert-space dimensions and truncation levels
+        starting from the current instance's dimensions and the provided initial truncations,
+        until the deviation between consecutive iterations for the first N states is below
+        the specified tolerance.
+
+        Parameters
+        ----------
+        N : int
+            Number of eigenenergies to check for convergence.
+        tolerance : float
+            Tolerance for convergence. Deviation is computed as the maximum absolute difference
+            ('max') or the sum of absolute differences ('absolute_sum') between consecutive
+            iterations' energies.
+        initial_truncations : Sequence[int]
+            Initial truncation levels for each diagonalization step. Length must match the
+            number of modes (including fermionic if present).
+        tolerance_type : str, optional
+            Type of deviation calculation: 'max' (default) or 'absolute_sum'.
+        max_iterations : int, optional
+            Maximum number of iterations to perform. Default is 100.
+        dimension_increment : int, optional
+            Increment for dimensions per iteration. Default is 1.
+        truncation_increment : int, optional
+            Increment for truncations per iteration. Default is 1.
+        verbose : bool, optional
+            If True, print iteration details. Default is False.
+
+        Returns
+        -------
+        dict
+            Dictionary containing:
+            - 'dimensions': list of optimized dimensions
+            - 'truncations': list of optimized truncations
+            - 'energies': np.ndarray of the first N converged energies
+            - 'iterations': int, number of iterations performed
+
+        Raises
+        ------
+        ValueError
+            If inputs are invalid or convergence is not reached within max_iterations.
+        """
+        if N <= 0:
+            raise ValueError("N must be a positive integer.")
+        if tolerance <= 0:
+            raise ValueError("tolerance must be positive.")
+        if tolerance_type not in ['max', 'absolute_sum']:
+            raise ValueError("tolerance_type must be 'max' or 'absolute_sum'.")
+
+        expected_trunc_len = self.modes + (1 if self.has_fermionic_coupling else 0)
+        if len(initial_truncations) != expected_trunc_len:
+            raise ValueError(
+                f"initial_truncations must have length {expected_trunc_len} "
+                f"(modes: {self.modes}, fermionic: {self.has_fermionic_coupling})."
+            )
+
+        current_dims = list(self.dimensions)
+        current_truncs = list(initial_truncations)
+        prev_energies = None
+        converged = False
+        converged_energies = None
+        convergence_iteration = None
+
+        for iteration in range(max_iterations):
+            # Create a new Circuit instance with current dimensions
+            new_circuit = Circuit(
+                non_linear_frequency=self.non_linear_frequency,
+                non_linear_phase_zpf=self.non_linear_phase_zpf,
+                dimensions=current_dims,
+                Ej=self.Ej,
+                linear_frequencies=self.linear_frequencies,
+                linear_couplings=self.linear_coupling,
+                Ej_second=self.Ej_second,
+                Gamma=self.Gamma,
+                epsilon_r=self.epsilon_r,
+                phase_ext=self.phase_ext,
+            )
+
+            # Copy harmonic modes store if present
+            if self._harmonic_modes_store is not None:
+                new_circuit._store_harmonic_modes(
+                    self._harmonic_modes_store["frequencies"],
+                    self._harmonic_modes_store["phase_zpf"]
+                )
+
+            energies, _ = new_circuit.eigensystem(truncation=current_truncs)
+            energies_N = energies[:N]
+
+            if prev_energies is not None:
+                diff = np.abs(energies_N - prev_energies)
+                if tolerance_type == 'max':
+                    deviation = np.max(diff)
+                else:
+                    deviation = np.sum(diff)
+
+                if verbose:
+                    print(f"Iteration {iteration}: dims {current_dims}, truncs {current_truncs}, deviation {deviation:.2e}")
+
+                if deviation < tolerance:
+                    converged = True
+                    converged_energies = energies_N.copy()
+                    convergence_iteration = iteration
+                    if verbose:
+                        print(f"Converged at iteration {iteration}")
+                    break
+
+            prev_energies = energies_N.copy()
+
+            # Increase dimensions and truncations
+            current_dims = [d + dimension_increment for d in current_dims]
+            current_truncs = [t + truncation_increment for t in current_truncs]
+
+        if not converged:
+            if verbose:
+                print(f"Did not converge within {max_iterations} iterations")
+            raise ValueError(f"Did not converge within {max_iterations} iterations")
+
+        # Minimize dimensions
+        for i in range(len(current_dims) - 1, -1, -1):
+            if verbose:
+                print(f"Checking dimension minimization for mode {i}: current_dim {current_dims[i]}, current_trunc {current_truncs[i]}")
+            while True:
+                temp_dims = current_dims.copy()
+                temp_dims[i] -= dimension_increment
+                if temp_dims[i] < 1:
+                    break
+
+                # Create circuit with reduced dimension
+                new_circuit = Circuit(
+                    non_linear_frequency=self.non_linear_frequency,
+                    non_linear_phase_zpf=self.non_linear_phase_zpf,
+                    dimensions=temp_dims,
+                    Ej=self.Ej,
+                    linear_frequencies=self.linear_frequencies,
+                    linear_couplings=self.linear_coupling,
+                    Ej_second=self.Ej_second,
+                    Gamma=self.Gamma,
+                    epsilon_r=self.epsilon_r,
+                    phase_ext=self.phase_ext,
+                )
+                if self._harmonic_modes_store is not None:
+                    new_circuit._store_harmonic_modes(
+                        self._harmonic_modes_store["frequencies"],
+                        self._harmonic_modes_store["phase_zpf"]
+                    )
+
+                energies, _ = new_circuit.eigensystem(truncation=current_truncs)
+                if len(energies) < N:
+                    break
+                energies_N = energies[:N]
+                diff = np.abs(energies_N - converged_energies)
+                if tolerance_type == 'max':
+                    deviation = np.max(diff)
+                else:
+                    deviation = np.sum(diff)
+
+                if deviation < tolerance:
+                    current_dims = temp_dims
+                    if verbose:
+                        print(f"Minimizing dimension {i}: dims {current_dims}, truncs {current_truncs}, deviation {deviation:.2e}")
+                else:
+                    break  # Cannot reduce further for this mode
+
+        # Minimize truncations by reducing each mode step-by-step
+        for i in range(len(current_truncs) - 1, -1, -1):
+            min_trunc = 2 if i == 0 and self.has_fermionic_coupling else 1
+            while current_truncs[i] > min_trunc:
+                temp_truncs = current_truncs.copy()
+                temp_truncs[i] -= truncation_increment
+                if temp_truncs[i] < min_trunc:
+                    break
+
+                # Create circuit with reduced truncation
+                new_circuit = Circuit(
+                    non_linear_frequency=self.non_linear_frequency,
+                    non_linear_phase_zpf=self.non_linear_phase_zpf,
+                    dimensions=current_dims,
+                    Ej=self.Ej,
+                    linear_frequencies=self.linear_frequencies,
+                    linear_couplings=self.linear_coupling,
+                    Ej_second=self.Ej_second,
+                    Gamma=self.Gamma,
+                    epsilon_r=self.epsilon_r,
+                    phase_ext=self.phase_ext,
+                )
+                if self._harmonic_modes_store is not None:
+                    new_circuit._store_harmonic_modes(
+                        self._harmonic_modes_store["frequencies"],
+                        self._harmonic_modes_store["phase_zpf"]
+                    )
+
+                energies, _ = new_circuit.eigensystem(truncation=temp_truncs)
+                if len(energies) < N:
+                    break  # Cannot reduce further, not enough states
+                energies_N = energies[:N]
+                diff = np.abs(energies_N - converged_energies)
+                if tolerance_type == 'max':
+                    deviation = np.max(diff)
+                else:
+                    deviation = np.sum(diff)
+
+                if deviation < tolerance:
+                    current_truncs = temp_truncs
+                    if verbose:
+                        print(f"Minimizing truncation {i}: dims {current_dims}, truncs {current_truncs}, deviation {deviation:.2e}")
+                else:
+                    break  # Cannot reduce further for this mode
+
+        return {
+            'dimensions': current_dims,
+            'truncations': current_truncs,
+            'energies': converged_energies,
+            'iterations': convergence_iteration,
+        }
+
     def parameter_names(self) -> list[str]:
         """Return the ordered list of physical parameters used by the circuit."""
         names = ["non_linear_frequency", "non_linear_phase_zpf", "Ej", "Ej_second"]
