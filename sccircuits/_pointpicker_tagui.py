@@ -108,7 +108,7 @@ class JupyterTagUI(BaseTagUI):
         ipyw = self._ipyw
         i_field = ipyw.IntText(description="i:", layout=ipyw.Layout(width="140px"))
         j_field = ipyw.IntText(description="j:", layout=ipyw.Layout(width="140px"))
-        sigma_field = ipyw.Text(description="sigma:", layout=ipyw.Layout(width="160px"))
+        sigma_field = ipyw.Text(description="σ:", layout=ipyw.Layout(width="160px"))
         ok_button = ipyw.Button(description="OK", layout=ipyw.Layout(width="80px"))
         remove_button = ipyw.Button(
             description="Remove Tag", layout=ipyw.Layout(width="120px")
@@ -312,7 +312,7 @@ class MatplotlibTagUI(BaseTagUI):
 
         i_box = TextBox(i_ax, "i:", initial="")
         j_box = TextBox(j_ax, "j:", initial="")
-        sigma_box = TextBox(sigma_ax, "sigma:", initial="")
+        sigma_box = TextBox(sigma_ax, "σ:", initial="")
         ok_button = Button(ok_ax, "OK")
         remove_button = Button(remove_ax, "Remove Tag")
 
