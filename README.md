@@ -1,5 +1,7 @@
 # SCCircuits - Superconducting Circuit Analysis Package
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17751124.svg)](https://doi.org/10.5281/zenodo.17751124)
+
 A comprehensive Python package for analyzing superconducting quantum circuits, including Black Box Quantization (BBQ) and circuit parameter fitting capabilities.
 
 ## Features
