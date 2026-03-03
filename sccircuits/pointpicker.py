@@ -474,6 +474,16 @@ class PointPicker:
         if x_scale <= 0:
             raise ValueError("x_scale must be positive.")
         data_dict = self.to_dict(include_sigma=include_sigma, x_scale=x_scale)
+        unlabeled_points: list[list[Optional[float]]] = []
+        for (x, y), label, sigma in zip(self.points, self.labels, self.sigmas):
+            if label is not None:
+                continue
+            x_val = float(x) * x_scale
+            if include_sigma:
+                sigma_val = float(sigma) if sigma is not None else None
+                unlabeled_points.append([x_val, float(y), sigma_val])
+            else:
+                unlabeled_points.append([x_val, float(y)])
         yaml_data = {
             "metadata": {
                 "format_version": "1.0",
@@ -482,7 +492,8 @@ class PointPicker:
                 "include_sigma": include_sigma,
                 "description": "PointPicker data export"
             },
-            "data": {f"{k[0]},{k[1]}": [list(point) for point in v] for k, v in data_dict.items()}
+            "data": {f"{k[0]},{k[1]}": [list(point) for point in v] for k, v in data_dict.items()},
+            "unlabeled": unlabeled_points,
         }
         with open(filename, 'w') as f:
             yaml.dump(yaml_data, f, default_flow_style=False)
@@ -510,7 +521,8 @@ class PointPicker:
         metadata = yaml_data.get("metadata", {})
         axis_lock = metadata.get("axis_lock", False)
         picker = cls(ax, axis_lock=axis_lock)
-        data = yaml_data["data"]
+        data = yaml_data.get("data", {})
+        unlabeled_data = yaml_data.get("unlabeled", [])
         points_list = []
         labels_list = []
         sigmas_list = []
@@ -527,6 +539,17 @@ class PointPicker:
                 points_list.append([x, y])
                 labels_list.append((i, j))
                 sigmas_list.append(sigma)
+        for point in unlabeled_data:
+            if len(point) == 2:
+                x, y = point
+                sigma = None
+            elif len(point) == 3:
+                x, y, sigma = point
+            else:
+                raise ValueError(f"Invalid unlabeled point format: {point}")
+            points_list.append([x, y])
+            labels_list.append(None)
+            sigmas_list.append(sigma)
         picker.points = np.array(points_list)
         picker.labels = labels_list
         picker.sigmas = sigmas_list
