@@ -1,0 +1,44 @@
+[workspace]
+name = "sccircuits"
+version = "0.1.0"
+description = "Development environment for SCCircuits"
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "osx-64", "linux-64"]
+
+[dependencies]
+python = "3.11.*"
+pip = ">=25"
+numpy = ">=2.3,<3"
+scipy = ">=1.15,<2"
+matplotlib = ">=3.10,<4"
+sympy = ">=1.13,<2"
+ipywidgets = ">=8.1,<9"
+ipython = ">=9,<10"
+pytest = ">=8,<9"
+pytest-cov = ">=5,<7"
+black = ">=25,<26"
+flake8 = ">=7,<8"
+mypy = ">=1.16,<2"
+jupyter = ">=1,<2"
+notebook = ">=7,<8"
+
+[target.osx-arm64.dependencies]
+libblas = { version = ">=3.9.0,<4", build = "*accelerate" }
+libcblas = { version = ">=3.9.0,<4", build = "*accelerate" }
+liblapack = { version = ">=3.9.0,<4", build = "*accelerate" }
+liblapacke = { version = ">=3.9.0,<4", build = "*accelerate" }
+
+[tasks]
+install = "python -m pip --cache-dir .pixi/pip-cache install --no-deps --no-build-isolation -e ."
+install-dev = "python -m pip --cache-dir .pixi/pip-cache install --no-deps --no-build-isolation -e ."
+test = "pytest tests/ -v"
+coverage = "pytest tests/ --cov=sccircuits --cov-report=html"
+format = "black sccircuits/ tests/"
+lint = "flake8 sccircuits/ tests/"
+typecheck = "mypy sccircuits/"
+example = "python example_usage.py"
+deps-check = "python -m pip --cache-dir .pixi/pip-cache check"
+deps-freeze = "python -m pip --cache-dir .pixi/pip-cache freeze"
+
+[environments]
+sccircuits = []

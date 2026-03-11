@@ -10,16 +10,22 @@ git clone https://github.com/yourusername/sccircuits.git
 cd sccircuits
 ```
 
-2. Create a virtual environment:
+2. Install Pixi (if needed):
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# macOS (Homebrew)
+brew install pixi
+
+# Cross-platform installer (alternative)
+# curl -fsSL https://pixi.sh/install.sh | sh
 ```
 
-3. Install in development mode with optional dependencies:
+3. Install the project in editable mode inside the Pixi environment:
 ```bash
-pip install -e ".[dev,interactive]"
+pixi run -e sccircuits install-dev
 ```
+
+This editable install uses `pip --no-deps` to avoid replacing Pixi-managed binary dependencies.
+Use a dedicated Pixi environment for this repository instead of a shared global Conda environment.
 
 ## Code Style
 
@@ -31,21 +37,38 @@ We use several tools to maintain code quality:
 
 Run formatting and checks:
 ```bash
-black sccircuits/
-flake8 sccircuits/
-mypy sccircuits/
+pixi run -e sccircuits format
+pixi run -e sccircuits lint
+pixi run -e sccircuits typecheck
 ```
 
 ## Running Tests
 
 Run tests with pytest:
 ```bash
-pytest tests/ -v
+pixi run -e sccircuits test
 ```
 
 For coverage report:
 ```bash
-pytest tests/ --cov=sccircuits --cov-report=html
+pixi run -e sccircuits coverage
+```
+
+## Dependency Updates
+
+When updating dependencies, use:
+
+```bash
+pixi update
+pixi run -e sccircuits deps-check
+pixi run -e sccircuits test
+```
+
+If conflicts appear after upgrades, reset the Pixi environment and reinstall:
+
+```bash
+pixi clean
+pixi run -e sccircuits install-dev
 ```
 
 ## Documentation
@@ -84,6 +107,7 @@ When reporting bugs, please include:
 - Python version
 - SCCircuits version
 - Operating system
+- Whether you used Pixi default environment or a custom environment
 - Minimal code example to reproduce the issue
 - Full error traceback
 
