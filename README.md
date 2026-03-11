@@ -14,20 +14,81 @@ A comprehensive Python package for analyzing superconducting quantum circuits, i
 
 ## Installation
 
-### From source:
+### Recommended (Pixi)
+
+Pixi is the default environment manager for this repository.
+It is significantly lighter/faster than classic Conda workflows and keeps robust binary resolution for NumPy/SciPy.
+
+1. Install Pixi: [https://pixi.sh/latest/](https://pixi.sh/latest/)
+2. Clone the repository:
+
 ```bash
 git clone https://github.com/joanjcaceres/sccircuits.git
 cd sccircuits
-pip install -e .
 ```
 
-### Dependencies
+3. Install the package in editable mode inside the Pixi environment:
 
-The package requires:
-- `numpy` - Numerical computations
-- `scipy` - Scientific computing and optimization
-- `matplotlib` - Plotting and visualization
-- `ipywidgets` (optional) - Interactive Jupyter widgets
+```bash
+pixi run -e sccircuits install-dev
+```
+
+`install-dev` uses `pip --no-deps` so NumPy/SciPy stay managed by Pixi/conda-forge.
+
+4. Run tests:
+
+```bash
+pixi run -e sccircuits test
+```
+
+### Updating dependencies safely
+
+Use this workflow to minimize conflicts:
+
+```bash
+pixi update
+pixi run -e sccircuits deps-check
+pixi run -e sccircuits test
+```
+
+Use a dedicated Pixi environment for this repository (do not reuse large shared Conda environments).
+
+If `deps-check` fails, recreate the environment:
+
+```bash
+pixi clean
+pixi run -e sccircuits install-dev
+```
+
+### Apple Silicon BLAS/LAPACK note
+
+On `osx-arm64` (Apple Silicon), `pixi.toml` forces:
+
+- `libblas` with `*accelerate`
+- `liblapack` with `*accelerate`
+
+This mirrors the stable setup previously used in `env-acc` and avoids common SciPy linear algebra backend issues on M-series Macs.
+
+### Environment baseline
+
+The current Pixi environment targets:
+
+- Python `3.11`
+- NumPy `2.3.x`
+- SciPy `1.15.x`
+- BLAS/LAPACK `3.9.x` (`accelerate` on Apple Silicon)
+
+### Alternative (pip/venv)
+
+If you prefer a plain Python environment:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -e ".[dev,interactive]"
+```
+
+For the most stable NumPy/SciPy binary setup on Apple Silicon, Pixi is recommended over plain pip/venv.
 
 ## Quick Start
 
