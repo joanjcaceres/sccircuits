@@ -294,6 +294,13 @@ class CircuitGraphApp:
             command=self._duplicate_selection,
             tooltip="Repeat the selected block to the right.",
         )
+        self._create_toolbar_button(
+            toolbar,
+            text="Merge",
+            command=self._merge_selected_nodes,
+            tooltip="Merge selected nodes into the focused node.",
+            shortcut="M",
+        )
 
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
 
@@ -368,6 +375,7 @@ class CircuitGraphApp:
         self.root.bind("n", lambda _: self._set_mode("node"))
         self.root.bind("c", lambda _: self._set_mode("edge"))
         self.root.bind("g", lambda _: self._set_mode("ground"))
+        self.root.bind("m", lambda _: self._merge_selected_nodes())
         self.root.bind("<Escape>", lambda _: self._set_mode(None))
         self.root.bind("<Delete>", lambda _: self._delete_focused_node())
         self.root.bind("<BackSpace>", lambda _: self._delete_focused_node())
@@ -823,6 +831,51 @@ class CircuitGraphApp:
         self._push_history()
         self._update_status(f"Node {node_name} removed.")
 
+    def _merge_selected_nodes(self) -> None:
+        selected_nodes = sorted(self.selected_nodes)
+        if len(selected_nodes) < 2:
+            self._update_status("Select at least two nodes to merge.")
+            return
+
+        survivor_id = (
+            self.focus_node
+            if self.focus_node is not None and self.focus_node in self.selected_nodes
+            else selected_nodes[0]
+        )
+        merged_snapshot, summary = self._merge_nodes_in_snapshot(
+            self._snapshot_state(), survivor_id, set(selected_nodes)
+        )
+        if summary["merged_nodes"] == 0:
+            self._update_status("No nodes were merged.")
+            return
+
+        survivor_name = next(
+            (
+                node["name"]
+                for node in merged_snapshot.get("nodes", [])
+                if node["identifier"] == survivor_id
+            ),
+            f"Node {survivor_id}",
+        )
+
+        self._restore_state(merged_snapshot)
+        self._push_history()
+
+        details: list[str] = []
+        if summary["removed_self_loops"]:
+            details.append(
+                f"removed {summary['removed_self_loops']} internal connection(s)"
+            )
+        if summary["combined_ground_edges"]:
+            details.append(
+                f"combined {summary['combined_ground_edges'] + 1} ground connection(s)"
+            )
+
+        detail_text = f" ({'; '.join(details)})" if details else ""
+        self._update_status(
+            f"Merged {len(selected_nodes)} nodes into {survivor_name}.{detail_text}"
+        )
+
     def _remove_node(self, node_id: int) -> None:
         node = self.nodes.pop(node_id, None)
         if node is None:
@@ -1229,6 +1282,159 @@ class CircuitGraphApp:
 
     def _create_ground_edge(self, node_id: int, params: EdgeParameters) -> None:
         self._instantiate_ground_edge(node_id, params)
+
+    @staticmethod
+    def _sum_optional_expressions(
+        expressions: list[Optional[sp.Expr]],
+    ) -> Optional[sp.Expr]:
+        terms = [expr for expr in expressions if expr is not None]
+        if not terms:
+            return None
+
+        total = sp.Integer(0)
+        for expr in terms:
+            total += expr
+        total = sp.simplify(total)
+        return None if total == 0 else total
+
+    @staticmethod
+    def _inverse_inductance_expr(
+        inductance_expr: Optional[sp.Expr],
+    ) -> Optional[sp.Expr]:
+        if inductance_expr is None:
+            return None
+        return sp.simplify(sp.Integer(1) / inductance_expr)
+
+    @classmethod
+    def _combine_ground_edges_in_snapshot(
+        cls, ground_edges: list[dict]
+    ) -> Optional[dict]:
+        if not ground_edges:
+            return None
+
+        combined = copy.deepcopy(ground_edges[0])
+        capacitance_expr = cls._sum_optional_expressions(
+            [edge.get("capacitance_expr") for edge in ground_edges]
+        )
+        l_inverse_expr = cls._sum_optional_expressions(
+            [
+                edge.get("l_inverse_expr")
+                or cls._inverse_inductance_expr(edge.get("inductance_expr"))
+                for edge in ground_edges
+            ]
+        )
+        inductance_expr = (
+            sp.simplify(sp.Integer(1) / l_inverse_expr)
+            if l_inverse_expr is not None
+            else None
+        )
+
+        if capacitance_expr is None and inductance_expr is None:
+            return None
+
+        combined["capacitance_expr"] = capacitance_expr
+        combined["capacitance_text"] = None
+        combined["inductance_expr"] = inductance_expr
+        combined["inductance_text"] = None
+        combined["l_inverse_expr"] = l_inverse_expr
+        return combined
+
+    @classmethod
+    def _merge_nodes_in_snapshot(
+        cls, snapshot: dict, survivor_id: int, selected_nodes: set[int]
+    ) -> tuple[dict, dict[str, int]]:
+        merged_snapshot = copy.deepcopy(snapshot)
+        existing_node_ids = {
+            node["identifier"] for node in merged_snapshot.get("nodes", [])
+        }
+        merged_node_ids = {
+            node_id
+            for node_id in selected_nodes
+            if node_id in existing_node_ids and node_id != survivor_id
+        }
+        if survivor_id not in existing_node_ids or not merged_node_ids:
+            return (
+                merged_snapshot,
+                {
+                    "merged_nodes": 0,
+                    "rewired_edges": 0,
+                    "removed_self_loops": 0,
+                    "combined_ground_edges": 0,
+                },
+            )
+
+        merged_snapshot["nodes"] = [
+            node
+            for node in merged_snapshot.get("nodes", [])
+            if node["identifier"] not in merged_node_ids
+        ]
+
+        rewired_edges = 0
+        removed_self_loops = 0
+        edges_out: list[dict] = []
+        survivor_ground_edges: list[dict] = []
+
+        for edge in merged_snapshot.get("edges", []):
+            original_nodes = list(edge["nodes"])
+            if edge.get("is_ground"):
+                source_id = original_nodes[0]
+                if source_id in merged_node_ids:
+                    edge["nodes"] = [survivor_id, GROUND_NODE_ID]
+                    rewired_edges += 1
+                if edge["nodes"][0] == survivor_id:
+                    if source_id == survivor_id:
+                        survivor_ground_edges.insert(0, edge)
+                    else:
+                        survivor_ground_edges.append(edge)
+                else:
+                    edges_out.append(edge)
+                continue
+
+            first = (
+                survivor_id
+                if original_nodes[0] in merged_node_ids
+                else original_nodes[0]
+            )
+            second = (
+                survivor_id
+                if original_nodes[1] in merged_node_ids
+                else original_nodes[1]
+            )
+            if [first, second] != original_nodes:
+                rewired_edges += 1
+            if first == second:
+                removed_self_loops += 1
+                continue
+            edge["nodes"] = [first, second]
+            edges_out.append(edge)
+
+        combined_ground_edges = 0
+        if survivor_ground_edges:
+            if len(survivor_ground_edges) == 1:
+                edges_out.append(survivor_ground_edges[0])
+            else:
+                combined_ground_edges = len(survivor_ground_edges) - 1
+                combined_ground_edge = cls._combine_ground_edges_in_snapshot(
+                    survivor_ground_edges
+                )
+                if combined_ground_edge is not None:
+                    edges_out.append(combined_ground_edge)
+
+        merged_snapshot["edges"] = sorted(
+            edges_out, key=lambda edge: edge["identifier"]
+        )
+        merged_snapshot["selected_nodes"] = [survivor_id]
+        merged_snapshot["focus_node"] = survivor_id
+        merged_snapshot["selected_node"] = None
+        return (
+            merged_snapshot,
+            {
+                "merged_nodes": len(merged_node_ids),
+                "rewired_edges": rewired_edges,
+                "removed_self_loops": removed_self_loops,
+                "combined_ground_edges": combined_ground_edges,
+            },
+        )
 
     def _snapshot_state(self) -> dict:
         nodes_snapshot = [
@@ -2027,9 +2233,7 @@ class CircuitGraphApp:
             else f"def {triplet_func_name}():"
         )
         dense_signature = (
-            f"def {dense_func_name}({args}):"
-            if args
-            else f"def {dense_func_name}():"
+            f"def {dense_func_name}({args}):" if args else f"def {dense_func_name}():"
         )
         lines: list[str] = [triplet_signature]
 

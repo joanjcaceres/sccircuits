@@ -114,3 +114,185 @@ def test_matrix_function_snippet_uses_triplets_and_materializes_correctly():
             ]
         ),
     )
+
+
+def test_merge_nodes_in_snapshot_rewires_edges_and_combines_ground_connections():
+    c12 = sp.Symbol("C12")
+    c13 = sp.Symbol("C13")
+    c23 = sp.Symbol("C23")
+    cg1 = sp.Symbol("Cg1")
+    cg2 = sp.Symbol("Cg2")
+    l1 = sp.Symbol("L1")
+    l2 = sp.Symbol("L2")
+    l1_inv = sp.simplify(1 / l1)
+    l2_inv = sp.simplify(1 / l2)
+
+    snapshot = {
+        "node_counter": 4,
+        "edge_counter": 15,
+        "view_scale": 1.0,
+        "nodes": [
+            {"identifier": 1, "name": "N1", "x": 0.0, "y": 0.0},
+            {"identifier": 2, "name": "N2", "x": 10.0, "y": 0.0},
+            {"identifier": 3, "name": "N3", "x": 20.0, "y": 0.0},
+        ],
+        "edges": [
+            {
+                "identifier": 10,
+                "nodes": [1, 2],
+                "capacitance_expr": c12,
+                "capacitance_text": "C12",
+                "inductance_expr": None,
+                "inductance_text": None,
+                "l_inverse_expr": None,
+                "is_ground": False,
+                "ground_offset_x": 0.0,
+                "ground_offset_y": 0.0,
+            },
+            {
+                "identifier": 11,
+                "nodes": [2, 3],
+                "capacitance_expr": c23,
+                "capacitance_text": "C23",
+                "inductance_expr": None,
+                "inductance_text": None,
+                "l_inverse_expr": None,
+                "is_ground": False,
+                "ground_offset_x": 0.0,
+                "ground_offset_y": 0.0,
+            },
+            {
+                "identifier": 12,
+                "nodes": [1, 3],
+                "capacitance_expr": c13,
+                "capacitance_text": "C13",
+                "inductance_expr": None,
+                "inductance_text": None,
+                "l_inverse_expr": None,
+                "is_ground": False,
+                "ground_offset_x": 0.0,
+                "ground_offset_y": 0.0,
+            },
+            {
+                "identifier": 13,
+                "nodes": [1, GROUND_NODE_ID],
+                "capacitance_expr": cg1,
+                "capacitance_text": "Cg1",
+                "inductance_expr": l1,
+                "inductance_text": "L1",
+                "l_inverse_expr": l1_inv,
+                "is_ground": True,
+                "ground_offset_x": 0.0,
+                "ground_offset_y": 104.0,
+            },
+            {
+                "identifier": 14,
+                "nodes": [2, GROUND_NODE_ID],
+                "capacitance_expr": cg2,
+                "capacitance_text": "Cg2",
+                "inductance_expr": l2,
+                "inductance_text": "L2",
+                "l_inverse_expr": l2_inv,
+                "is_ground": True,
+                "ground_offset_x": 20.0,
+                "ground_offset_y": 104.0,
+            },
+        ],
+        "selected_nodes": [1, 2],
+        "focus_node": 1,
+        "selected_node": None,
+        "mode": None,
+    }
+
+    merged_snapshot, summary = CircuitGraphApp._merge_nodes_in_snapshot(
+        snapshot, 1, {1, 2}
+    )
+
+    assert {node["identifier"] for node in merged_snapshot["nodes"]} == {1, 3}
+    assert merged_snapshot["selected_nodes"] == [1]
+    assert merged_snapshot["focus_node"] == 1
+    assert merged_snapshot["selected_node"] is None
+
+    non_ground_edges = [
+        edge for edge in merged_snapshot["edges"] if not edge.get("is_ground")
+    ]
+    ground_edges = [edge for edge in merged_snapshot["edges"] if edge.get("is_ground")]
+
+    assert len(non_ground_edges) == 2
+    assert sorted(tuple(edge["nodes"]) for edge in non_ground_edges) == [(1, 3), (1, 3)]
+
+    assert len(ground_edges) == 1
+    ground_edge = ground_edges[0]
+    assert ground_edge["identifier"] == 13
+    assert ground_edge["nodes"] == [1, GROUND_NODE_ID]
+    assert sp.simplify(ground_edge["capacitance_expr"] - (cg1 + cg2)) == 0
+    assert sp.simplify(ground_edge["l_inverse_expr"] - (l1_inv + l2_inv)) == 0
+    assert (
+        sp.simplify(ground_edge["inductance_expr"] - sp.simplify(1 / (l1_inv + l2_inv)))
+        == 0
+    )
+
+    assert summary == {
+        "merged_nodes": 1,
+        "rewired_edges": 3,
+        "removed_self_loops": 1,
+        "combined_ground_edges": 1,
+    }
+
+
+def test_merge_nodes_in_snapshot_keeps_parallel_non_ground_edges():
+    c13 = sp.Symbol("C13")
+    c23 = sp.Symbol("C23")
+
+    snapshot = {
+        "node_counter": 4,
+        "edge_counter": 13,
+        "view_scale": 1.0,
+        "nodes": [
+            {"identifier": 1, "name": "N1", "x": 0.0, "y": 0.0},
+            {"identifier": 2, "name": "N2", "x": 10.0, "y": 0.0},
+            {"identifier": 3, "name": "N3", "x": 20.0, "y": 0.0},
+        ],
+        "edges": [
+            {
+                "identifier": 11,
+                "nodes": [2, 3],
+                "capacitance_expr": c23,
+                "capacitance_text": "C23",
+                "inductance_expr": None,
+                "inductance_text": None,
+                "l_inverse_expr": None,
+                "is_ground": False,
+                "ground_offset_x": 0.0,
+                "ground_offset_y": 0.0,
+            },
+            {
+                "identifier": 12,
+                "nodes": [1, 3],
+                "capacitance_expr": c13,
+                "capacitance_text": "C13",
+                "inductance_expr": None,
+                "inductance_text": None,
+                "l_inverse_expr": None,
+                "is_ground": False,
+                "ground_offset_x": 0.0,
+                "ground_offset_y": 0.0,
+            },
+        ],
+        "selected_nodes": [1, 2],
+        "focus_node": 1,
+        "selected_node": None,
+        "mode": None,
+    }
+
+    merged_snapshot, summary = CircuitGraphApp._merge_nodes_in_snapshot(
+        snapshot, 1, {1, 2}
+    )
+
+    non_ground_edges = [
+        edge for edge in merged_snapshot["edges"] if not edge.get("is_ground")
+    ]
+    assert len(non_ground_edges) == 2
+    assert sorted(edge["identifier"] for edge in non_ground_edges) == [11, 12]
+    assert sorted(tuple(edge["nodes"]) for edge in non_ground_edges) == [(1, 3), (1, 3)]
+    assert summary["combined_ground_edges"] == 0
