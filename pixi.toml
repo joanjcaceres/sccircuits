@@ -21,6 +21,9 @@ flake8 = ">=7,<8"
 mypy = ">=1.16,<2"
 jupyter = ">=1,<2"
 notebook = ">=7,<8"
+sphinx = ">=8,<9"
+myst-parser = ">=4,<5"
+sphinx-rtd-theme = ">=3,<4"
 
 [target.osx-arm64.dependencies]
 libblas = { version = ">=3.9.0,<4", build = "*accelerate" }
@@ -39,6 +42,8 @@ typecheck = "mypy sccircuits/"
 example = "python example_usage.py"
 deps-check = "python -m pip --cache-dir .pixi/pip-cache check"
 deps-freeze = "python -m pip --cache-dir .pixi/pip-cache freeze"
+docs-html = "sphinx-build -b html docs docs/_build/html"
+docs-doctest = "sphinx-build -b doctest docs docs/_build/doctest"
 
 [environments]
 sccircuits = []

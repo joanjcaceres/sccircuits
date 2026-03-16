@@ -1,0 +1,8 @@
+.wy-nav-content {
+  max-width: 1100px;
+}
+
+.rst-content code.literal,
+.rst-content tt.literal {
+  color: #145374;
+}

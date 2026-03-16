@@ -20,23 +20,33 @@ Typical workflow::
     >>> fitter = TransitionFitter(model_func=model, data=data,
     ...                           returns_eigenvalues=True)
     >>> result = fitter.fit(params_initial=[5.0, 0.1], verbose=1)
-    >>> stats = fitter.get_fit_statistics()
+    >>> result.x.shape
+    (2,)
 
 This module depends on :mod:`numpy` and :mod:`scipy` (≥1.10).
 """
 
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+
 try:
     import yaml
 except ImportError:
     import json as yaml
 
 import numpy as np
-from IPython.display import clear_output
 from scipy import stats
 from scipy.linalg import eigh
 from scipy.optimize import least_squares, differential_evolution
+
+try:
+    from IPython.display import clear_output
+except ImportError:  # pragma: no cover - optional dependency
+
+    def clear_output(*_args, **_kwargs) -> None:
+        """Fallback used when IPython is not installed."""
+        return None
+
 
 Transition = Tuple[int, int]  # (i, j) with j > i
 
@@ -66,7 +76,9 @@ class DataPoint:
         if self.sigma is not None:
             self.sigma = float(self.sigma)
             if self.sigma <= 0:
-                raise ValueError(f"sigma must be positive when provided, got {self.sigma}")
+                raise ValueError(
+                    f"sigma must be positive when provided, got {self.sigma}"
+                )
 
 
 class TransitionFitter:
@@ -90,9 +102,7 @@ class TransitionFitter:
         model_func: Callable[[float, Sequence[float]], Union[np.ndarray, np.ndarray]],
         data: Dict[Transition, Sequence[Union[DataPoint, Tuple[float, float]]]],
         returns_eigenvalues: bool = False,
-        jacobian_func: Optional[
-            Callable[[float, Sequence[float]], np.ndarray]
-        ] = None,
+        jacobian_func: Optional[Callable[[float, Sequence[float]], np.ndarray]] = None,
     ) -> None:
         """Create a fitter instance.
 
@@ -196,7 +206,7 @@ class TransitionFitter:
         ):
             self.history.append((params.copy(), res.copy()))
             self._last_recorded_params = params.copy()
-            if self._verbose and self._method != 'differential_evolution':
+            if self._verbose and self._method != "differential_evolution":
                 # clear the previous output to avoid flooding the notebook
                 clear_output(wait=True)
                 print(
@@ -213,7 +223,7 @@ class TransitionFitter:
         bounds: Optional[Tuple[Sequence[float], Sequence[float]]] = None,
         verbose: int = 0,
         callback: Optional[Callable[[np.ndarray, np.ndarray], None]] = None,
-        method: str = 'least_squares',
+        method: str = "least_squares",
         **kwargs,
     ):
         """Perform a nonlinear least-squares fit for the supplied data.
@@ -265,13 +275,19 @@ class TransitionFitter:
                     f" {initial}"
                 )
 
-        if method == 'least_squares':
+        if method == "least_squares":
             jac_callable = self.jacobian if self.jacobian_func is not None else None
-            result = self._fit_least_squares(initial, bounds, verbose, jac_callable, **kwargs)
-        elif method == 'differential_evolution':
+            result = self._fit_least_squares(
+                initial, bounds, verbose, jac_callable, **kwargs
+            )
+        elif method == "differential_evolution":
             if bounds is None:
-                raise ValueError("bounds must be provided when using differential_evolution")
-            result = self._fit_differential_evolution(initial, bounds, verbose, **kwargs)
+                raise ValueError(
+                    "bounds must be provided when using differential_evolution"
+                )
+            result = self._fit_differential_evolution(
+                initial, bounds, verbose, **kwargs
+            )
         else:
             raise ValueError(f"Unknown method: {method}")
         self.result = result
@@ -311,19 +327,22 @@ class TransitionFitter:
         de_callback = None
         if verbose > 0:
             gen_count = 0
+
             def de_callback(x, convergence):
                 nonlocal gen_count
                 gen_count += 1
                 cost = cost_func(x)
                 residual_norm = np.sqrt(cost)
-                print(f"DE Gen {gen_count}: params = {x}, residual_norm = {residual_norm}")
+                print(
+                    f"DE Gen {gen_count}: params = {x}, residual_norm = {residual_norm}"
+                )
 
         # Set defaults for DE
-        de_kwargs.setdefault('maxiter', 1000)
-        de_kwargs.setdefault('popsize', 15)
+        de_kwargs.setdefault("maxiter", 1000)
+        de_kwargs.setdefault("popsize", 15)
         if verbose > 0:
-            de_kwargs['disp'] = False  # Disable default disp, use our callback
-            de_kwargs['callback'] = de_callback
+            de_kwargs["disp"] = False  # Disable default disp, use our callback
+            de_kwargs["callback"] = de_callback
 
         return differential_evolution(cost_func, bounds=bounds_de, **de_kwargs)
 
@@ -357,7 +376,6 @@ class TransitionFitter:
                 jac_rows.append(row)
 
         return np.vstack(jac_rows)
-
 
     def get_theoretical_curve(
         self,
@@ -418,7 +436,9 @@ class TransitionFitter:
             for dp, tv in zip(data_points, theo_values):
                 y_exp.append(dp.value)
                 y_theo.append(tv)
-                sigma_list.append(dp.sigma if dp.sigma is not None else self.DEFAULT_SIGMA)
+                sigma_list.append(
+                    dp.sigma if dp.sigma is not None else self.DEFAULT_SIGMA
+                )
 
         y_exp_array = np.array(y_exp)
         y_theo_array = np.array(y_theo)
@@ -430,7 +450,6 @@ class TransitionFitter:
         self._cached_params = self.result.x.copy()
 
         return self._cached_base_data
-
 
     def save_complete_result(self, filepath: str):
         """
@@ -494,7 +513,9 @@ class TransitionFitter:
         return fitter
 
     @classmethod
-    def load_from_yaml(cls, filename: str, *, x_scale: float = 1.0) -> Dict[Transition, Sequence[Union[DataPoint, Tuple[float, float]]]]:
+    def load_from_yaml(
+        cls, filename: str, *, x_scale: float = 1.0
+    ) -> Dict[Transition, Sequence[Union[DataPoint, Tuple[float, float]]]]:
         """
         Load experimental data from a YAML file.
 
@@ -512,11 +533,11 @@ class TransitionFitter:
         """
         if x_scale <= 0:
             raise ValueError("x_scale must be positive.")
-        with open(filename, 'r') as f:
+        with open(filename, "r") as f:
             yaml_data = yaml.safe_load(f)
         data = {}
         for key_str, points in yaml_data["data"].items():
-            i, j = map(int, key_str.split(','))
+            i, j = map(int, key_str.split(","))
             scaled_points = []
             for point in points:
                 scaled_point = [point[0] * x_scale] + list(point[1:])
@@ -570,7 +591,7 @@ if __name__ == "__main__":
         data=data_example,
     )
     result_de = fitter_de.fit(
-        bounds=([0.0, 5.0], [5.0, 15.0]), method='differential_evolution', verbose=1
+        bounds=([0.0, 5.0], [5.0, 15.0]), method="differential_evolution", verbose=1
     )
 
     # Print formatted summary

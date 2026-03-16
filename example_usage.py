@@ -1,21 +1,83 @@
 #!/usr/bin/env python3
-"""
-Example script demonstrating the basic usage of SCCircuits package.
-
-This script shows how to:
-1. Create a simple superconducting circuit
-2. Calculate its eigenenergies
-3. Show basic analysis capabilities
-"""
+"""Example usage for the current SCCircuits public API."""
 
 import numpy as np
-import matplotlib.pyplot as plt
-from sccircuits import Circuit, get_info
 
-def main():
+from sccircuits import BBQ, Circuit, FitAnalysis, TransitionFitter, get_info
+
+
+def run_circuit_example() -> None:
+    """Construct a Circuit from harmonic-mode data and inspect it."""
+    frequencies = [5.0, 6.2, 7.8]
+    phase_zpf = [0.12, 0.08, 0.03]
+    dimensions = [18, 10, 6]
+
+    circuit = Circuit.from_harmonic_modes(
+        frequencies=frequencies,
+        phase_zpf=phase_zpf,
+        dimensions=dimensions,
+        Ej=0.95,
+    )
+    evals, _ = circuit.eigensystem(truncation=[12, 8, 6])
+    star = circuit.star_representation()
+
+    print("1. Circuit from harmonic modes")
+    print(f"   nonlinear frequency: {circuit.non_linear_frequency:.4f} GHz")
+    print(f"   nonlinear phase zpf: {circuit.non_linear_phase_zpf:.4f}")
+    print(f"   lowest transition: {evals[1] - evals[0]:.4f} GHz")
+    print(f"   star frequencies: {np.round(star['linear_frequencies'], 4)}")
+
+
+def run_bbq_example() -> None:
+    """Build a minimal BBQ model from circuit matrices."""
+    c_matrix = np.array([[40.0e-15]], dtype=float)
+    l_inv_matrix = np.array([[1.0 / 1.23e-9]], dtype=float)
+
+    bbq = BBQ(c_matrix, l_inv_matrix, non_linear_nodes=(0,))
+    bbq.selected_modes = [0]
+    bbq.dimensions = (8,)
+    h0 = bbq.hamiltonian_0()
+
+    print("2. Black Box Quantization")
+    print(f"   linear modes (GHz): {np.round(bbq.linear_modes_GHz, 4)}")
+    print(f"   phase zpf: {np.round(bbq.phase_zpf_list, 6)}")
+    print(f"   H0 shape: {h0.shape}")
+
+
+def run_transition_fit_example() -> None:
+    """Fit a tiny synthetic spectroscopy dataset."""
+
+    def model(phi_ext: float, params: np.ndarray) -> np.ndarray:
+        omega0, amplitude = params
+        return np.array([0.0, omega0 + amplitude * np.cos(phi_ext)], dtype=float)
+
+    data = {
+        (0, 1): [
+            (0.0, 5.25, 0.02),
+            (np.pi / 2.0, 5.00, 0.02),
+            (np.pi, 4.75, 0.02),
+        ]
+    }
+
+    fitter = TransitionFitter(
+        model_func=model,
+        data=data,
+        returns_eigenvalues=True,
+    )
+    result = fitter.fit(
+        params_initial=[4.9, 0.1],
+        bounds=([4.0, 0.0], [6.0, 1.0]),
+        verbose=0,
+    )
+    analysis = FitAnalysis(result, parameter_labels=["omega0", "amplitude"])
+
+    print("3. Transition fitting")
+    print(f"   fitted parameters: {np.round(result.x, 6)}")
+    print(f"   reduced chi^2: {analysis.chi2_reduced:.6f}")
+
+
+def main() -> None:
     """Run the example demonstrating SCCircuits functionality."""
-    
-    # Print package information
     print("=" * 60)
     print("SCCircuits - Example Usage")
     print("=" * 60)
@@ -24,117 +86,16 @@ def main():
     print(f"Author: {info['author']}")
     print(f"Description: {info['description']}")
     print()
-    
-    # Example 1: Single-mode transmon-like circuit
-    print("1. Single-mode circuit analysis:")
-    print("-" * 30)
-    
-    frequencies = [5.2]      # GHz - single mode frequency
-    phase_zpf = [0.15]       # radians - phase zero-point fluctuation
-    dimensions = [50]        # Hilbert space truncation
-    Ej = 1.2                 # GHz - Josephson energy
-    
-    # Create circuit
-    circuit = Circuit(
-        frequencies=frequencies,
-        phase_zpf=phase_zpf, 
-        dimensions=dimensions,
-        Ej=Ej,
-        phase_ext=0.0
-    )
-    
-    print(f"Circuit modes: {circuit.modes}")
-    print(f"Collective frequency: {circuit.collective_frequency:.3f} GHz")
-    print(f"Nonlinear frequency: {circuit.non_linear_frequency:.3f} GHz")
-    print(f"Charging energy (Ec): {circuit.Ec:.3f} GHz")
-    print(f"Inductive energy (El): {circuit.El:.3f} GHz")
-    
-    # Calculate eigenenergies
-    truncation = 10
-    evals, evecs = circuit.eigensystem(truncation=truncation)
-    
-    print(f"\nFirst {truncation} energy levels (GHz):")
-    for i, energy in enumerate(evals):
-        print(f"  Level {i}: {energy:.6f}")
-    
-    # Calculate transition frequencies
-    transitions_01 = evals[1] - evals[0]
-    transitions_12 = evals[2] - evals[1] 
-    anharmonicity = transitions_12 - transitions_01
-    
-    print("\nTransition frequencies:")
-    print(f"  |0⟩ → |1⟩: {transitions_01:.6f} GHz")
-    print(f"  |1⟩ → |2⟩: {transitions_12:.6f} GHz") 
-    print(f"  Anharmonicity: {anharmonicity:.6f} GHz")
-    
-    # Example 2: Multi-mode circuit
+
+    run_circuit_example()
     print("\n" + "=" * 60)
-    print("2. Multi-mode circuit analysis:")
-    print("-" * 30)
-    
-    frequencies_multi = [5.0, 6.5, 7.8]  # Three modes
-    phase_zpf_multi = [0.1, 0.15, 0.05]
-    dimensions_multi = [30, 20, 15]
-    Ej_multi = 0.8
-    
-    circuit_multi = Circuit(
-        frequencies=frequencies_multi,
-        phase_zpf=phase_zpf_multi,
-        dimensions=dimensions_multi, 
-        Ej=Ej_multi
-    )
-    
-    print(f"Multi-mode circuit with {circuit_multi.modes} modes")
-    print(f"Linear frequencies: {circuit_multi.linear_frequencies}")
-    print(f"Linear coupling: {circuit_multi.linear_coupling}")
-    
-    # Example 3: External flux sweep
+    run_bbq_example()
     print("\n" + "=" * 60)
-    print("3. External flux dependence:")
-    print("-" * 30)
-    
-    # Sweep external flux
-    phi_ext_values = np.linspace(0, 2*np.pi, 50)
-    transition_01_vs_flux = []
-    
-    for phi_ext in phi_ext_values:
-        evals_flux, _ = circuit.eigensystem(truncation=5, phase_ext=phi_ext)
-        transition_01_vs_flux.append(evals_flux[1] - evals_flux[0])
-    
-    transition_01_vs_flux = np.array(transition_01_vs_flux)
-    
-    print(f"Flux sweep completed over {len(phi_ext_values)} points")
-    print(f"Transition frequency range: {transition_01_vs_flux.min():.3f} - {transition_01_vs_flux.max():.3f} GHz")
-    print(f"Flux sensitivity: {(transition_01_vs_flux.max() - transition_01_vs_flux.min()):.3f} GHz")
-    
-    # Simple visualization (if matplotlib is available)
-    try:
-        plt.figure(figsize=(10, 6))
-        
-        plt.subplot(1, 2, 1)
-        plt.bar(range(truncation), evals, alpha=0.7, color='skyblue')
-        plt.xlabel('Energy Level')
-        plt.ylabel('Energy (GHz)')
-        plt.title('Energy Spectrum')
-        plt.grid(True, alpha=0.3)
-        
-        plt.subplot(1, 2, 2)
-        plt.plot(phi_ext_values/(2*np.pi), transition_01_vs_flux, 'r-', linewidth=2)
-        plt.xlabel('External Flux (Φ/Φ₀)')
-        plt.ylabel('|0⟩→|1⟩ Frequency (GHz)')
-        plt.title('Flux Dependence')
-        plt.grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        plt.show()
-        print("\nPlots generated successfully!")
-        
-    except Exception as e:
-        print(f"\nNote: Plotting failed ({e}), but analysis completed successfully.")
-    
+    run_transition_fit_example()
     print("\n" + "=" * 60)
-    print("Example completed successfully!")
+    print("\nExample completed successfully!")
     print("=" * 60)
+
 
 if __name__ == "__main__":
     main()

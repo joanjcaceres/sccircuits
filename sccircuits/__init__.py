@@ -2,13 +2,14 @@
 SCCircuits - Superconducting Circuit Analysis Package
 
 A comprehensive Python package for analyzing superconducting quantum circuits,
-including Black Box Quantization (BBQ) and circuit fitting capabilities.
+including chain-based circuit models, Black Box Quantization (BBQ), and
+spectroscopy-fitting workflows.
 
 Main Classes:
     Circuit: Main circuit class for superconducting quantum circuits
-    CircuitFitter: Parameter fitting for circuit models
     BBQ: Black Box Quantization analysis
     TransitionFitter: General transition frequency fitting
+    FitAnalysis: Post-fit diagnostics for least-squares results
     PointPicker: Interactive point selection tool for data analysis
 
 Utilities:
@@ -38,33 +39,40 @@ __all__ = [
     # Core classes
     "Circuit",
     "BBQ",
-    
     # Analysis tools
     "TransitionFitter",
     "PointPicker",
     "FitAnalysis",
-
     # Utilities
     "IterativeHamiltonianDiagonalizer",
     "lanczos_krylov",
-    
     # Package metadata
     "__version__",
     "__author__",
     "__email__",
+    "get_version",
+    "get_info",
 ]
+
 
 # Package information
 def get_version():
     """Return the version of the sccircuits package."""
     return __version__
 
+
 def get_info():
     """Return basic information about the sccircuits package."""
     return {
-        "name": "sccircuits", 
+        "name": "sccircuits",
         "version": __version__,
         "author": __author__,
         "description": "Superconducting Circuit Analysis Package",
-        "main_classes": ["Circuit", "CircuitFitter", "BBQ", "TransitionFitter"],
+        "main_classes": [
+            "Circuit",
+            "BBQ",
+            "TransitionFitter",
+            "FitAnalysis",
+            "PointPicker",
+        ],
     }

@@ -1,0 +1,41 @@
+"""Checks for the documented public API surface."""
+
+from __future__ import annotations
+
+import sccircuits
+from sccircuits import (
+    BBQ,
+    Circuit,
+    FitAnalysis,
+    IterativeHamiltonianDiagonalizer,
+    PointPicker,
+    TransitionFitter,
+    get_info,
+    get_version,
+)
+
+
+def test_get_info_lists_current_public_classes():
+    info = get_info()
+
+    assert info["version"] == get_version()
+    assert info["main_classes"] == [
+        "Circuit",
+        "BBQ",
+        "TransitionFitter",
+        "FitAnalysis",
+        "PointPicker",
+    ]
+    assert "CircuitFitter" not in info["main_classes"]
+
+
+def test_current_top_level_exports_are_importable():
+    assert Circuit is sccircuits.Circuit
+    assert BBQ is sccircuits.BBQ
+    assert TransitionFitter is sccircuits.TransitionFitter
+    assert FitAnalysis is sccircuits.FitAnalysis
+    assert PointPicker is sccircuits.PointPicker
+    assert (
+        IterativeHamiltonianDiagonalizer is sccircuits.IterativeHamiltonianDiagonalizer
+    )
+    assert not hasattr(sccircuits, "CircuitFitter")

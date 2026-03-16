@@ -77,6 +77,8 @@ pixi run -e sccircuits install-dev
 - Use NumPy-style docstrings
 - Include examples in docstrings when helpful
 - Update README.md if adding new features
+- Build the docs locally with `pixi run -e sccircuits docs-html`
+- Run doctest coverage with `pixi run -e sccircuits docs-doctest`
 
 ## Submitting Changes
 

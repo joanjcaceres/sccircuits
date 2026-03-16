@@ -36,6 +36,11 @@ interactive = [
     "ipywidgets>=8.1,<9",
     "IPython>=9,<10"
 ]
+docs = [
+    "sphinx>=8,<9",
+    "myst-parser>=4,<5",
+    "sphinx-rtd-theme>=3,<4",
+]
 dev = [
     "pytest>=8.4,<9",
     "pytest-cov>=5,<7",
@@ -49,7 +54,7 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/joanjcaceres/sccircuits"
 Repository = "https://github.com/joanjcaceres/sccircuits"
-Documentation = "https://github.com/joanjcaceres/sccircuits#readme"
+Documentation = "https://sccircuits.readthedocs.io/"
 Issues = "https://github.com/joanjcaceres/sccircuits/issues"
 
 [tool.setuptools]
