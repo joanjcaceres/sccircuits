@@ -2212,9 +2212,48 @@ class CircuitGraphApp:
             sp.SparseMatrix(size, size, l_inv_entries),
         )
 
+    @staticmethod
+    def _matrix_snippet_support_functions() -> list[str]:
+        indent = " " * 4
+        return [
+            "def _matrix_triplets_from_entries(entries):",
+            f"{indent}if not entries:",
+            f"{indent*2}return (",
+            f"{indent*3}np.array([], dtype=int),",
+            f"{indent*3}np.array([], dtype=int),",
+            f"{indent*3}np.array([], dtype=float),",
+            f"{indent*2})",
+            f"{indent}rows, cols, data = zip(*entries)",
+            f"{indent}return (",
+            f"{indent*2}np.array(rows, dtype=int),",
+            f"{indent*2}np.array(cols, dtype=int),",
+            f"{indent*2}np.array(data, dtype=float),",
+            f"{indent})",
+            "",
+            "def _sparse_matrix_from_entries(entries, shape):",
+            f"{indent}matrix = sparse.csr_matrix(shape, dtype=float)",
+            f"{indent}if not entries:",
+            f"{indent*2}return matrix",
+            f"{indent}rows, cols, data = _matrix_triplets_from_entries(entries)",
+            f"{indent}return matrix + sparse.coo_matrix(",
+            f"{indent*2}(data, (rows, cols)),",
+            f"{indent*2}shape=shape,",
+            f"{indent}).tocsr()",
+            "",
+            "def _dense_matrix_from_entries(entries, shape):",
+            f"{indent}matrix = np.zeros(shape, dtype=float)",
+            f"{indent}if not entries:",
+            f"{indent*2}return matrix",
+            f"{indent}rows, cols, data = _matrix_triplets_from_entries(entries)",
+            f"{indent}np.add.at(matrix, (rows, cols), data)",
+            f"{indent}return matrix",
+        ]
+
     def _matrix_function_snippet(
         self,
+        entries_func_name: str,
         triplet_func_name: str,
+        sparse_func_name: str,
         dense_func_name: str,
         size: int,
         entries: MatrixEntries,
@@ -2227,65 +2266,93 @@ class CircuitGraphApp:
         param_names = [symbol.name for symbol in symbols]
         args = ", ".join(param_names)
         indent = " " * 4
+        shape_literal = f"({size}, {size})"
+        entries_signature = (
+            f"def {entries_func_name}({args}):"
+            if args
+            else f"def {entries_func_name}():"
+        )
         triplet_signature = (
             f"def {triplet_func_name}({args}):"
             if args
             else f"def {triplet_func_name}():"
         )
+        sparse_signature = (
+            f"def {sparse_func_name}({args}):" if args else f"def {sparse_func_name}():"
+        )
         dense_signature = (
             f"def {dense_func_name}({args}):" if args else f"def {dense_func_name}():"
         )
-        lines: list[str] = [triplet_signature]
+        call_suffix = f"({args})" if args else "()"
+        lines: list[str] = [entries_signature]
 
         if not sorted_entries:
-            lines.append(f"{indent}rows = np.array([], dtype=int)")
-            lines.append(f"{indent}cols = np.array([], dtype=int)")
-            lines.append(f"{indent}data = np.array([], dtype=float)")
+            lines.append(f"{indent}return []")
         else:
-            rows = ", ".join(str(row) for (row, _), _ in sorted_entries)
-            cols = ", ".join(str(col) for (_, col), _ in sorted_entries)
-            data = ", ".join(pycode(expr) for _, expr in sorted_entries)
-            lines.append(f"{indent}rows = np.array([{rows}], dtype=int)")
-            lines.append(f"{indent}cols = np.array([{cols}], dtype=int)")
-            lines.append(f"{indent}data = np.array([{data}], dtype=float)")
+            lines.append(f"{indent}return [")
+            for (row, col), expr in sorted_entries:
+                lines.append(f"{indent*2}({row}, {col}, {pycode(expr)}),")
+            lines.append(f"{indent}]")
 
-        lines.append(f"{indent}return rows, cols, data, ({size}, {size})")
+        lines.append("")
+        lines.append(triplet_signature)
+        lines.append(f"{indent}entries = {entries_func_name}{call_suffix}")
+        lines.append(
+            f"{indent}rows, cols, data = _matrix_triplets_from_entries(entries)"
+        )
+        lines.append(f"{indent}return rows, cols, data, {shape_literal}")
+        lines.append("")
+        lines.append(sparse_signature)
+        lines.append(
+            f"{indent}matrix = sparse.csr_matrix({shape_literal}, dtype=float)"
+        )
+        lines.append(f"{indent}entries = {entries_func_name}{call_suffix}")
+        lines.append(f"{indent}if not entries:")
+        lines.append(f"{indent*2}return matrix")
+        lines.append(
+            f"{indent}return _sparse_matrix_from_entries(entries, {shape_literal})"
+        )
         lines.append("")
         lines.append(dense_signature)
+        lines.append(f"{indent}matrix = np.zeros({shape_literal}, dtype=float)")
+        lines.append(f"{indent}entries = {entries_func_name}{call_suffix}")
+        lines.append(f"{indent}if not entries:")
+        lines.append(f"{indent*2}return matrix")
         lines.append(
-            f"{indent}rows, cols, data, shape = {triplet_func_name}({args})"
-            if args
-            else f"{indent}rows, cols, data, shape = {triplet_func_name}()"
+            f"{indent}return _dense_matrix_from_entries(entries, {shape_literal})"
         )
-        lines.append(f"{indent}matrix = np.zeros(shape, dtype=float)")
-        lines.append(f"{indent}np.add.at(matrix, (rows, cols), data)")
-        lines.append(f"{indent}return matrix")
         return lines, param_names
 
-    def _copy_snippet(self) -> None:
-        if not self.nodes:
-            messagebox.showinfo(
-                "No data",
-                "Create at least one node to generate the matrices.",
-                parent=self.root,
-            )
-            return
+    def _build_snippet(self) -> str:
         size, c_entries, l_inv_entries = self._compute_matrix_entries()
         snippet_lines = [
             "import math",
             "import numpy as np",
+            "from scipy import sparse",
             "",
             f"# Matrix size: {size} x {size}",
-            "# Triplet helpers keep the representation sparse until you call",
+            "# Nonzero-entry helpers keep the representation sparse until you call",
             "# the dense wrappers below.",
             "",
         ]
+        snippet_lines.extend(self._matrix_snippet_support_functions())
+        snippet_lines.append("")
 
         c_func_lines, c_params = self._matrix_function_snippet(
-            "C_matrix_triplets", "C_matrix_func", size, c_entries
+            "C_matrix_entries",
+            "C_matrix_triplets",
+            "C_matrix_sparse",
+            "C_matrix_func",
+            size,
+            c_entries,
         )
         l_func_lines, l_params = self._matrix_function_snippet(
-            "L_inv_matrix_triplets", "L_inv_matrix_func", size, l_inv_entries
+            "L_inv_matrix_entries",
+            "L_inv_matrix_triplets",
+            "L_inv_matrix_sparse",
+            "L_inv_matrix_func",
+            size,
+            l_inv_entries,
         )
 
         if c_params:
@@ -2300,7 +2367,17 @@ class CircuitGraphApp:
         snippet_lines.extend(c_func_lines)
         snippet_lines.append("")
         snippet_lines.extend(l_func_lines)
-        snippet = "\n".join(snippet_lines)
+        return "\n".join(snippet_lines)
+
+    def _copy_snippet(self) -> None:
+        if not self.nodes:
+            messagebox.showinfo(
+                "No data",
+                "Create at least one node to generate the matrices.",
+                parent=self.root,
+            )
+            return
+        snippet = self._build_snippet()
         self.root.clipboard_clear()
         self.root.clipboard_append(snippet)
         self._update_status("Snippet copied to clipboard.")
