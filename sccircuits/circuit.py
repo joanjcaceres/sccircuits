@@ -3,7 +3,7 @@ from typing import Optional, Sequence, Union
 
 # --- SciPy imports (dense & sparse) ---
 from scipy.sparse import diags
-from scipy.linalg import cosm, sinm
+from scipy.linalg import cosm, sinm, null_space, eigh
 from sccircuits.utilities import lanczos_krylov
 from sccircuits.iterative_diagonalizer import IterativeHamiltonianDiagonalizer
 
@@ -114,13 +114,18 @@ class Circuit:
         non_linear_phase_zpf : float
             Zero-point phase fluctuation of the nonlinear mode (radians).
         linear_frequencies : Sequence[float] or None, optional
-            Frequencies of the remaining linear modes (GHz). Provide a sequence of
-            length ``len(dimensions) - 1`` when multiple modes are present; defaults
-            to ``None`` for single-mode circuits.
+            Frequencies of the remaining linear modes in the **chain
+            (tridiagonal) representation** (GHz). Provide a sequence of
+            length ``len(dimensions) - 1`` when multiple modes are present;
+            defaults to ``None`` for single-mode circuits.  To obtain the
+            equivalent star representation use :meth:`star_representation`.
         linear_couplings : Sequence[float] or None, optional
-            Sequential coupling strengths between modes (GHz). Provide a sequence of
-            length ``len(dimensions) - 1`` when multiple modes are present; defaults
-            to ``None`` for single-mode circuits.
+            Sequential nearest-neighbour coupling strengths between modes in
+            the **chain (tridiagonal) representation** (GHz). Provide a
+            sequence of length ``len(dimensions) - 1`` when multiple modes
+            are present; defaults to ``None`` for single-mode circuits.  To
+            obtain the equivalent star representation use
+            :meth:`star_representation`.
         dimensions : Sequence[int]
             Hilbert-space dimensions for each mode.
         Ej : float
@@ -734,20 +739,22 @@ class Circuit:
         )
         return names
 
-    def parameter_vector(self) -> np.ndarray:
-        """Return the current parameter values following :meth:`parameter_names`."""
-        parts: list[np.ndarray] = [
-            np.array([self.non_linear_frequency], dtype=float),
-            np.array([self.non_linear_phase_zpf], dtype=float),
-            np.array([self.Ej], dtype=float),
-            np.array([self.Ej_second], dtype=float),
-            np.array(self.linear_frequencies, dtype=float),
-            np.array(self.linear_coupling, dtype=float),
-        ]
-        for idx in range(4, 6):
-            if parts[idx].size == 0:
-                parts[idx] = np.array([], dtype=float)
-        return np.concatenate(parts)
+    def parameter_dict(self) -> dict[str, Union[float, np.ndarray]]:
+        """Return the current parameter values as a dictionary."""
+        params = {
+            "non_linear_frequency": self.non_linear_frequency,
+            "non_linear_phase_zpf": self.non_linear_phase_zpf,
+            "Ej": self.Ej,
+            "Ej_second": self.Ej_second,
+        }
+        
+        for idx, freq in enumerate(self.linear_frequencies):
+            params[f"linear_frequency_{idx}"] = freq
+        
+        for idx, coupling in enumerate(self.linear_coupling):
+            params[f"linear_coupling_{idx}"] = coupling
+        
+        return params
 
     def eigensystem_with_gradients(
         self,
@@ -964,39 +971,69 @@ class Circuit:
             "phase_zpf": phase_array.copy(),
         }
 
-    # def _non_collective_eigsystem(self) -> np.ndarray:
-    #     """
-    #     Calculate the eigenvalues and eigenvectors of the non-collective system.
-    #     """
-    #     normalized_phi_zpf = self.phase_zpf / np.linalg.norm(self.phase_zpf)
-    #     provisional_linear_mode_amplitudes = null_space(
-    #         normalized_phi_zpf.reshape(1, -1)
-    #     )
-    #     W = np.diag(self.frequencies)
-    #     linear_mode_subblock = provisional_linear_mode_amplitudes.conj().T @ (
-    #         W @ provisional_linear_mode_amplitudes
-    #     )
-    #     linear_frequencies, evecs = eigh(linear_mode_subblock)
+    def star_representation(self) -> dict[str, np.ndarray]:
+        """
+        Compute the linear frequencies and couplings in the star representation.
 
-    #     beta = provisional_linear_mode_amplitudes @ evecs
-    #     linear_coupling = (self.frequencies * normalized_phi_zpf) @ beta
+        In the star representation every linear mode couples directly to the
+        nonlinear (collective) mode and the linear modes are mutually
+        uncoupled.  This is the dual of the chain (tridiagonal)
+        representation stored in ``linear_frequencies`` and
+        ``linear_coupling``.
 
-    #     return linear_frequencies, linear_coupling
+        The conversion requires knowledge of the harmonic-mode frequencies
+        and phase zero-point fluctuations.  These are taken from the stored
+        harmonic-mode data when available (i.e. when the circuit was created
+        via :meth:`from_harmonic_modes`) or derived from the Lanczos
+        tridiagonal matrix through :attr:`bare_modes`.
 
-    # def _non_linear_frequency(self) -> np.ndarray:
-    #     non_linear_frequency = np.sqrt(
-    #         self.collective_frequency
-    #         * (self.collective_frequency - 2 * self.Ej * self.phi_zpf_rms**2)
-    #     )
-    #     return non_linear_frequency
+        Returns
+        -------
+        dict
+            ``'linear_frequencies'`` : np.ndarray
+                Frequencies of the uncoupled linear modes (GHz), length
+                ``modes - 1``.
+            ``'linear_couplings'`` : np.ndarray
+                Coupling of each linear mode to the nonlinear collective
+                mode (GHz), length ``modes - 1``.
 
-    # def _non_linear_phase_zpf(self) -> np.ndarray:
-    #     non_linear_phase_zpf = (
-    #         self.phi_zpf_rms
-    #         * (1 - (2 * self.Ej * self.phi_zpf_rms**2) / self.collective_frequency)
-    #         ** -0.25
-    #     )
-    #     return non_linear_phase_zpf
+        Raises
+        ------
+        ValueError
+            If the circuit has only one mode (no linear modes exist).
+        """
+        if self.modes < 2:
+            raise ValueError(
+                "Star representation requires at least two modes."
+            )
+
+        freqs = self.frequencies       # harmonic-mode frequencies
+        phi_zpf = self.phase_zpf       # harmonic-mode phase ZPF
+
+        normalized_phi_zpf = phi_zpf / np.linalg.norm(phi_zpf)
+
+        # Basis for the subspace orthogonal to the collective mode direction
+        provisional_linear_mode_amplitudes = null_space(
+            normalized_phi_zpf.reshape(1, -1)
+        )
+
+        # Project the frequency matrix onto the linear subspace
+        W = np.diag(freqs)
+        linear_mode_subblock = (
+            provisional_linear_mode_amplitudes.conj().T
+            @ W
+            @ provisional_linear_mode_amplitudes
+        )
+        linear_frequencies, evecs = eigh(linear_mode_subblock)
+
+        # Coupling vector between collective and each linear mode
+        beta = provisional_linear_mode_amplitudes @ evecs
+        linear_couplings = (freqs * normalized_phi_zpf) @ beta
+
+        return {
+            "linear_frequencies": linear_frequencies,
+            "linear_couplings": linear_couplings,
+        }
     
 if __name__ == "__main__":
     frequencies = [5.0, 6.0, 7.8]
