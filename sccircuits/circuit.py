@@ -102,6 +102,7 @@ class Circuit:
         Gamma: Optional[float] = None,
         epsilon_r: Optional[float] = None,
         phase_ext: float = 0.0,
+        remove_harmonic_Ej: bool = False,
     ):
         """
         Initializes a Circuit object for superconducting circuit analysis.
@@ -133,6 +134,9 @@ class Circuit:
             Fermionic energy level spacing in GHz. Provide together with Gamma.
         phase_ext : float, optional
             External flux phase in radians, default is 0.
+        remove_harmonic_Ej : bool, optional
+            If True, removes the harmonic part of the Josephson potential from the 
+            Hamiltonian. Defaults to False.
         Raises
         ------
         ValueError
@@ -186,7 +190,7 @@ class Circuit:
         self.Gamma = Gamma
         self.epsilon_r = epsilon_r
         self.phase_ext = phase_ext
-
+        self.remove_harmonic_Ej = remove_harmonic_Ej
         self.has_fermionic_coupling = (Gamma is not None and epsilon_r is not None)
         if (Gamma is None and epsilon_r is not None) or (Gamma is not None and epsilon_r is None):
             raise ValueError("Both Gamma and epsilon_r must be provided together for fermionic coupling, or both should be None.")
@@ -208,6 +212,7 @@ class Circuit:
         Gamma: Optional[float] = None,
         epsilon_r: Optional[float] = None,
         phase_ext: float = 0.0,
+        remove_harmonic_Ej: bool = False,
     ) -> "Circuit":
         """
         Construct a Circuit by first converting harmonic inputs with Lanczos.
@@ -230,6 +235,7 @@ class Circuit:
             phase_ext=phase_ext,
         )
 
+        circuit.remove_harmonic_Ej = remove_harmonic_Ej
         circuit._lanczos_basis = params["basis"]
         circuit._lanczos_tridiagonal = params["tridiagonal"]
         circuit._lanczos_status = params["status"]
@@ -265,7 +271,11 @@ class Circuit:
         # Calculate the nonlinear potential contributions. Keep phi_shift handy because
         # it is reused by multiple harmonic terms when present.
         cos_phi = cosm(gauge_invariant_phase_op)
-        hamiltonian -= self.Ej * cos_phi
+
+        if getattr(self, "remove_harmonic_Ej", False):
+            hamiltonian -= self.Ej * (cos_phi + 0.5 * phi_op @ phi_op)
+        else:
+            hamiltonian -= self.Ej * cos_phi
 
         if self.Ej_second != 0.0:
             cos_2phi = cosm(2.0 * gauge_invariant_phase_op)
