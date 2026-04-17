@@ -162,3 +162,71 @@ def test_dynamic_truncation_schedule_applies_per_mode():
     energies, _ = circuit.eigensystem(truncation=truncation_schedule)
 
     assert energies.shape[0] == truncation_schedule[-1]
+
+
+def test_bare_modes_reconstruct_harmonic_inputs_from_chain_matrix():
+    frequencies = [5.1, 6.2, 8.3]
+    phase_zpf = [0.12, 0.07, 0.03]
+
+    circuit = Circuit.from_harmonic_modes(
+        frequencies=frequencies,
+        phase_zpf=phase_zpf,
+        dimensions=[20, 10, 5],
+        Ej=0.9,
+    )
+
+    bare = circuit.bare_modes
+
+    assert np.allclose(bare["frequencies"], frequencies)
+    assert np.allclose(bare["phase_zpf"], phase_zpf)
+
+
+def test_from_star_basis_round_trips_star_representation():
+    base = Circuit.from_harmonic_modes(
+        frequencies=[5.1, 6.2, 8.3],
+        phase_zpf=[0.12, 0.07, 0.03],
+        dimensions=[20, 10, 5],
+        Ej=0.9,
+        Ej_second=0.1,
+    )
+    star = base.star_representation()
+
+    reconstructed = Circuit.from_star_basis(
+        non_linear_frequency=base.non_linear_frequency,
+        non_linear_phase_zpf=base.non_linear_phase_zpf,
+        linear_frequencies=star["linear_frequencies"],
+        linear_couplings=star["linear_couplings"],
+        dimensions=[20, 10, 5],
+        Ej=0.9,
+        Ej_second=0.1,
+    )
+
+    reconstructed_star = reconstructed.star_representation()
+
+    assert np.allclose(reconstructed.linear_frequencies, base.linear_frequencies)
+    assert np.allclose(reconstructed.linear_coupling, base.linear_coupling)
+    assert np.allclose(
+        reconstructed_star["linear_frequencies"], star["linear_frequencies"]
+    )
+    assert np.allclose(reconstructed_star["linear_couplings"], star["linear_couplings"])
+    assert np.allclose(reconstructed.harmonic_modes()["frequencies"], base.frequencies)
+    assert np.allclose(reconstructed.harmonic_modes()["phase_zpf"], base.phase_zpf)
+
+
+def test_from_star_representation_alias_matches_from_star_basis():
+    kwargs = {
+        "non_linear_frequency": 5.0,
+        "non_linear_phase_zpf": 0.15,
+        "linear_frequencies": [6.0, 7.0],
+        "linear_couplings": [0.25, 0.1],
+        "dimensions": [12, 6, 4],
+        "Ej": 0.8,
+    }
+
+    from_basis = Circuit.from_star_basis(**kwargs)
+    from_representation = Circuit.from_star_representation(**kwargs)
+
+    assert np.allclose(
+        from_basis.linear_frequencies, from_representation.linear_frequencies
+    )
+    assert np.allclose(from_basis.linear_coupling, from_representation.linear_coupling)
