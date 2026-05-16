@@ -12,12 +12,20 @@ A comprehensive Python package for analyzing superconducting quantum circuits, i
 - **Interactive Tools**: Point picking tools for data analysis and visualization
 - **Numerical Utilities**: Specialized algorithms for quantum circuit Hamiltonians
 
-## Standalone GUI Application
+## Companion GUI Application
 
-The BBQ circuit drawing GUI has moved out of this repository into the separate
-`bbq-circuit-designer` project. That app can be installed independently and
-launched with the `bbq-circuit-designer` command, while this repository remains
-focused on the `sccircuits` scientific Python package.
+The BBQ circuit drawing GUI is now maintained as the separate public
+[`bbq-circuit-designer`](https://github.com/joanjcaceres/bbq-circuit-designer)
+project. It is the companion matrix-builder app for SCCircuits workflows: draw
+a circuit in the GUI, copy the generated capacitance and inverse-inductance
+matrix snippet, then use those matrices with `sccircuits.BBQ`.
+
+Install it directly from GitHub:
+
+```bash
+python -m pip install "bbq-circuit-designer @ git+https://github.com/joanjcaceres/bbq-circuit-designer.git"
+bbq-circuit-designer
+```
 
 ## Installation
 
@@ -171,6 +179,10 @@ bbq = BBQ(C_matrix, L_inv_matrix, non_linear_nodes=(-1, 0))
 print("Linear mode frequencies (GHz):", bbq.linear_modes_GHz)
 print("Phase ZPF:", bbq.phase_zpf_list)
 ```
+
+You can also generate `C_matrix` and `L_inv_matrix` with the companion
+[`bbq-circuit-designer`](https://github.com/joanjcaceres/bbq-circuit-designer)
+GUI and pass the copied snippet output into `BBQ`.
 
 ### Interactive Point Picking
 
