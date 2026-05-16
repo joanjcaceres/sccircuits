@@ -12,6 +12,13 @@ A comprehensive Python package for analyzing superconducting quantum circuits, i
 - **Interactive Tools**: Point picking tools for data analysis and visualization
 - **Numerical Utilities**: Specialized algorithms for quantum circuit Hamiltonians
 
+## Standalone GUI Application
+
+The BBQ circuit drawing GUI has moved out of this repository into the separate
+`bbq-circuit-designer` project. That app can be installed independently and
+launched with the `bbq-circuit-designer` command, while this repository remains
+focused on the `sccircuits` scientific Python package.
+
 ## Installation
 
 ### Recommended (Pixi)
