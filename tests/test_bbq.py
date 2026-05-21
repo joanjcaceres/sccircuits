@@ -98,6 +98,30 @@ def test_hamiltonian_0_matches_harmonic_diagonal():
     assert np.allclose(bbq.hamiltonian_0(), expected)
 
 
+def test_unconfigured_selected_modes_and_dimensions_raise_clear_errors():
+    C_matrix = np.array([[2.0e-15]])
+    L_inv_matrix = np.array([[1.0 / 7.0e-9]])
+    bbq = BBQ(C_matrix, L_inv_matrix, non_linear_nodes=(0,))
+
+    with pytest.raises(ValueError, match="Set selected_modes"):
+        _ = bbq.selected_modes
+
+    with pytest.raises(ValueError, match="Set dimensions"):
+        _ = bbq.dimensions
+
+
+def test_selected_modes_accepts_common_integer_sequences():
+    C_matrix = np.eye(2)
+    L_inv_matrix = np.diag([2.0, 3.0])
+    bbq = BBQ(C_matrix, L_inv_matrix, non_linear_nodes=(0, 1))
+
+    bbq.selected_modes = (0, 1)
+    assert bbq.selected_modes == [0, 1]
+
+    bbq.selected_modes = np.array([1])
+    assert bbq.selected_modes == [1]
+
+
 def test_hamiltonian_nl_matches_manual_matrix_cosine():
     C_matrix = np.array([[2.0, 0.2], [0.2, 1.5]]) * 1e-15
     L_inv_matrix = np.array([[4.0, -1.0], [-1.0, 3.0]]) * 1e9

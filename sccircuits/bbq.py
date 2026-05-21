@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from functools import reduce
 from typing import Union
 
@@ -352,20 +353,32 @@ class BBQ:
     @property
     def selected_modes(self) -> list[int]:
         """Mode indices retained for Hamiltonian construction."""
+        self._require_selected_modes()
         return self._selected_modes
 
     @selected_modes.setter
-    def selected_modes(self, modes: list[int] | int) -> None:
+    def selected_modes(self, modes: Iterable[int] | int) -> None:
+        raw_modes: tuple[int, ...]
         if isinstance(modes, (int, np.integer)):
-            modes = [int(modes)]
-
-        if not isinstance(modes, list) or len(modes) == 0:
+            raw_modes = (int(modes),)
+        elif (
+            isinstance(modes, (str, bytes))
+            or not isinstance(modes, Iterable)
+        ):
             raise ValueError(
-                "selected_modes must be a non-empty list of indices."
+                "selected_modes must be an integer or a non-empty sequence "
+                "of indices."
+            )
+        else:
+            raw_modes = tuple(modes)
+
+        if len(raw_modes) == 0:
+            raise ValueError(
+                "selected_modes must contain at least one mode index."
             )
 
         selected = []
-        for mode in modes:
+        for mode in raw_modes:
             selected.append(self._validate_mode_index(mode))
 
         self._selected_modes = selected
@@ -373,6 +386,8 @@ class BBQ:
     @property
     def dimensions(self) -> tuple[int, ...]:
         """Hilbert-space dimensions for ``selected_modes``."""
+        if not hasattr(self, "_dimensions"):
+            raise ValueError("Set dimensions before reading dimensions.")
         return self._dimensions
 
     @dimensions.setter
