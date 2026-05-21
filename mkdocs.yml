@@ -1,0 +1,32 @@
+site_name: SCCircuits
+site_description: Superconducting circuit analysis and quantization tools
+site_url: https://joanjcaceres.github.io/sccircuits/
+repo_url: https://github.com/joanjcaceres/sccircuits
+repo_name: joanjcaceres/sccircuits
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Theory:
+      - Circuit Matrix Quantization: theory/circuit-matrix-quantization.md
+  - API and Tutorials:
+      - BBQ: api/bbq.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.superfences
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
