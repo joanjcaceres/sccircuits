@@ -105,22 +105,16 @@ class BBQ:
         self.non_linear_nodes = self._validate_nodes(non_linear_nodes)
 
         (
-            self.C_inv_sqrt,
             self._capacitance_basis,
             self._capacitance_eigenvalues,
         ) = self._capacitance_physical_subspace()
-        self.dynamical_matrix = self._dynamical_matrix()
 
         (
             self.mode_eigenvalues,
-            self._mass_weighted_mode_vectors,
             self.mode_vectors,
+            self._reduced_mode_vectors,
         ) = self._solve_generalized_modes()
 
-        self.eigensys_dynamical_matrix = (
-            self.mode_eigenvalues,
-            self._mass_weighted_mode_vectors,
-        )
         self.linear_modes = self._linear_modes()
         self.phase_zpf_list = self._phase_zpf_list()
         self.linear_modes_GHz = self._linear_modes_GHz()
@@ -170,9 +164,9 @@ class BBQ:
 
     def _capacitance_physical_subspace(
         self,
-    ) -> tuple[FloatArray, FloatArray, FloatArray]:
+    ) -> tuple[FloatArray, FloatArray]:
         """
-        Calculate the physical capacitance subspace and inverse square root.
+        Calculate the physical capacitance subspace.
 
         Tiny or null capacitance directions are projected out before solving
         the generalized eigenproblem. Negative capacitance directions beyond
@@ -198,22 +192,62 @@ class BBQ:
 
         physical_eigvals = eigvals_C[physical_idx]
         physical_basis = eigvecs_C[:, physical_idx]
-        C_inv_sqrt = (
-            physical_basis
-            @ np.diag(1.0 / np.sqrt(physical_eigvals))
-            @ physical_basis.T
+
+        return physical_basis, physical_eigvals
+
+    @property
+    def C_inv_sqrt(self) -> FloatArray:
+        """
+        Compatibility inverse square root of the capacitance matrix.
+
+        This quantity is not needed by the primary generalized-eigenproblem
+        calculation. It is built lazily for existing code that inspects the
+        legacy mass-weighted representation.
+        """
+        if not hasattr(self, "_C_inv_sqrt"):
+            inverse_sqrt_capacitance = np.diag(
+                1.0 / np.sqrt(self._capacitance_eigenvalues)
+            )
+            self._C_inv_sqrt = (
+                self._capacitance_basis
+                @ inverse_sqrt_capacitance
+                @ self._capacitance_basis.T
+            )
+
+        return self._C_inv_sqrt
+
+    @property
+    def dynamical_matrix(self) -> FloatArray:
+        """
+        Legacy mass-weighted matrix kept for compatibility and diagnostics.
+
+        The scientifically primary calculation solves
+        ``L_inv v = omega**2 C v`` directly. This matrix is computed only when
+        requested by older analysis code.
+        """
+        if not hasattr(self, "_dynamical_matrix_cache"):
+            self._dynamical_matrix_cache = (
+                self.C_inv_sqrt @ self.L_inv_matrix @ self.C_inv_sqrt
+            )
+
+        return self._dynamical_matrix_cache
+
+    @property
+    def eigensys_dynamical_matrix(self) -> tuple[FloatArray, FloatArray]:
+        """
+        Legacy eigenvalues and vectors of :attr:`dynamical_matrix`.
+
+        The eigenvalues match ``mode_eigenvalues``. The vectors are the
+        mass-weighted representation corresponding to ``mode_vectors``.
+        """
+        return self.mode_eigenvalues, self._mass_weighted_mode_vectors()
+
+    def _mass_weighted_mode_vectors(self) -> FloatArray:
+        """Return mode vectors in the legacy mass-weighted representation."""
+        sqrt_capacitance = np.diag(np.sqrt(self._capacitance_eigenvalues))
+        return self._capacitance_basis @ (
+            sqrt_capacitance @ self._reduced_mode_vectors
         )
-
-        return C_inv_sqrt, physical_basis, physical_eigvals
-
-    def _dynamical_matrix(self) -> FloatArray:
-        """
-        Calculate the legacy mass-weighted dynamical matrix.
-
-        The primary calculation uses the generalized eigenproblem directly.
-        This matrix is still exposed for compatibility and diagnostics.
-        """
-        return self.C_inv_sqrt @ self.L_inv_matrix @ self.C_inv_sqrt
 
     def _solve_generalized_modes(
         self,
@@ -224,22 +258,22 @@ class BBQ:
         Returns
         -------
         tuple of ndarray
-            ``(omega_squared, mass_weighted_vectors, mode_vectors)``. The mode
-            vectors are C-normalized and are the scientifically meaningful node
-            flux mode shapes.
+            ``(omega_squared, mode_vectors, reduced_mode_vectors)``. The full
+            mode vectors are C-normalized node-flux mode shapes, and the
+            reduced vectors are the same modes expressed in the positive
+            capacitance eigenbasis.
         """
-        inverse_sqrt_capacitance = np.diag(
-            1.0 / np.sqrt(self._capacitance_eigenvalues)
-        )
-        weighted_l_inv = (
-            inverse_sqrt_capacitance
-            @ self._capacitance_basis.T
+        reduced_l_inv = (
+            self._capacitance_basis.T
             @ self.L_inv_matrix
             @ self._capacitance_basis
-            @ inverse_sqrt_capacitance
         )
+        reduced_capacitance = np.diag(self._capacitance_eigenvalues)
 
-        eigenvalues, weighted_vectors = eigh(weighted_l_inv)
+        eigenvalues, reduced_vectors = eigh(
+            reduced_l_inv,
+            reduced_capacitance,
+        )
         scale = float(np.max(np.abs(eigenvalues)))
         tolerance = (
             _MODE_RELATIVE_TOLERANCE * scale
@@ -258,14 +292,10 @@ class BBQ:
             raise ValueError("No positive finite circuit modes were found.")
 
         omega_squared = eigenvalues[positive_idx]
-        weighted_vectors = weighted_vectors[:, positive_idx]
+        reduced_vectors = reduced_vectors[:, positive_idx]
+        mode_vectors = self._capacitance_basis @ reduced_vectors
 
-        mass_weighted_vectors = self._capacitance_basis @ weighted_vectors
-        mode_vectors = self._capacitance_basis @ (
-            inverse_sqrt_capacitance @ weighted_vectors
-        )
-
-        return omega_squared, mass_weighted_vectors, mode_vectors
+        return omega_squared, mode_vectors, reduced_vectors
 
     def _linear_modes(self) -> FloatArray:
         """
