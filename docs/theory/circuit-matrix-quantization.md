@@ -8,31 +8,31 @@ branch.
 
 ## Linear Circuit
 
-Use node fluxes $\boldsymbol{\Phi}$. The linearized Lagrangian is
+Use node fluxes $\Phi$. The linearized Lagrangian is
 
 $$
 \mathcal{L}
 =
-\frac{1}{2}\dot{\boldsymbol{\Phi}}^T
+\frac{1}{2}\dot{\Phi}^T
 \mathbf{C}
-\dot{\boldsymbol{\Phi}}
+\dot{\Phi}
 -
-\frac{1}{2}\boldsymbol{\Phi}^T
+\frac{1}{2}\Phi^T
 \mathbf{L}^{-1}
-\boldsymbol{\Phi}.
+\Phi.
 $$
 
 The equations of motion are
 
 $$
-\mathbf{C}\ddot{\boldsymbol{\Phi}}
+\mathbf{C}\ddot{\Phi}
 +
-\mathbf{L}^{-1}\boldsymbol{\Phi}
+\mathbf{L}^{-1}\Phi
 =0.
 $$
 
 With the normal-mode ansatz
-$\boldsymbol{\Phi}(t)=\mathbf{v}_k e^{i\omega_k t}$, the modes solve
+$\Phi(t)=\mathbf{v}_k e^{i\omega_k t}$, the modes solve
 
 $$
 \mathbf{L}^{-1}\mathbf{v}_k
@@ -61,10 +61,10 @@ $$
 $$
 
 The diagonal entries of $\mathbf{\Omega}^2$ are $\omega_k^2$. The normal
-coordinates $\boldsymbol{\eta}$, defined by
+coordinates $\eta$, defined by
 
 $$
-\boldsymbol{\Phi}=\mathbf{U}\boldsymbol{\eta},
+\Phi=\mathbf{U}\eta,
 $$
 
 then produce decoupled harmonic oscillators.
