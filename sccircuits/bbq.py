@@ -36,8 +36,9 @@ class BBQ:
         U.T @ C_matrix @ U = I
 
     With ``non_linear_nodes=(node_a, node_b)``, the nonlinear branch phase uses
-    the direction ``Phi_b - Phi_a``. Reversing the node order reverses the sign
-    of ``phase_zpf_list``.
+    the direction ``Phi_b - Phi_a``. A list of such tuples represents multiple
+    nonlinear branches. Reversing a branch tuple reverses the sign of that
+    branch's zero-point phase fluctuations.
 
     For the full derivation, rendered equations, units, and branch convention,
     see ``docs/theory/circuit-matrix-quantization.md`` and
@@ -51,9 +52,10 @@ class BBQ:
         Symmetric inverse inductance matrix in inverse Henries with the same
         shape as ``C_matrix``.
     non_linear_nodes
-        Node indices defining the nonlinear branch. The common two-node form
-        ``(node_a, node_b)`` uses branch phase ``Phi_b - Phi_a``. A single node
-        ``(node,)`` means phase from ground to that node.
+        Node indices defining one or more nonlinear branches. The common
+        two-node form ``(node_a, node_b)`` uses branch phase ``Phi_b - Phi_a``.
+        A single node ``(node,)`` means phase from ground to that node. A list
+        such as ``[(0, 1), (2, 3)]`` defines multiple nonlinear branches.
 
     Attributes
     ----------
@@ -64,7 +66,10 @@ class BBQ:
     mode_vectors
         C-normalized normal-mode vectors as columns.
     phase_zpf_list
-        Dimensionless phase zero-point fluctuations for the nonlinear branch.
+        Dimensionless phase zero-point fluctuations. This is a vector for one
+        nonlinear branch and a branch-by-mode matrix for multiple branches.
+    phase_zpf_matrix
+        Branch-by-mode matrix of dimensionless phase zero-point fluctuations.
 
     Examples
     --------
@@ -81,7 +86,7 @@ class BBQ:
         self,
         C_matrix: np.ndarray,
         L_inv_matrix: np.ndarray,
-        non_linear_nodes: tuple = (-1, 0),
+        non_linear_nodes: tuple | Iterable[tuple] = (-1, 0),
     ) -> None:
         self.C_matrix = self._as_valid_matrix(C_matrix, "C_matrix")
         self.L_inv_matrix = self._as_valid_matrix(L_inv_matrix, "L_inv_matrix")
@@ -92,7 +97,15 @@ class BBQ:
             )
 
         self.circuit_dimensions = self.C_matrix.shape[0]
-        self.non_linear_nodes = self._validate_nodes(non_linear_nodes)
+        self.nonlinear_branches = self._validate_nonlinear_branches(
+            non_linear_nodes
+        )
+        self.non_linear_nodes = (
+            self.nonlinear_branches[0]
+            if len(self.nonlinear_branches) == 1
+            else self.nonlinear_branches
+        )
+        self.branch_matrix = self._branch_matrix()
 
         (
             self._capacitance_basis,
@@ -106,6 +119,7 @@ class BBQ:
         ) = self._solve_generalized_modes()
 
         self.linear_modes = self._linear_modes()
+        self.phase_zpf_matrix = self._phase_zpf_matrix()
         self.phase_zpf_list = self._phase_zpf_list()
         self.linear_modes_GHz = self._linear_modes_GHz()
 
@@ -123,22 +137,55 @@ class BBQ:
 
         return array
 
-    def _validate_nodes(self, nodes: tuple) -> tuple[int, ...]:
-        """Validate nonlinear branch nodes and normalize negative indices."""
-        if not isinstance(nodes, tuple):
+    def _validate_nonlinear_branches(
+        self,
+        nodes: tuple | Iterable[tuple],
+    ) -> tuple[tuple[int, ...], ...]:
+        """
+        Validate nonlinear branch specifications.
+
+        ``non_linear_nodes`` may be a single branch tuple or an iterable of
+        branch tuples. A branch has either one node, meaning node-to-ground, or
+        two nodes, meaning ``Phi_b - Phi_a``.
+        """
+        if isinstance(nodes, tuple) and all(
+            isinstance(node, (int, np.integer)) for node in nodes
+        ):
+            return (self._validate_branch_nodes(nodes),)
+
+        if isinstance(nodes, (str, bytes)) or not isinstance(nodes, Iterable):
             raise ValueError(
-                "non_linear_nodes must be a tuple of node indices."
+                "non_linear_nodes must be a branch tuple or an iterable of "
+                "branch tuples."
             )
+
+        branches = []
+        for branch in nodes:
+            if not isinstance(branch, tuple):
+                raise ValueError(
+                    "Each nonlinear branch must be a tuple of node indices."
+                )
+            branches.append(self._validate_branch_nodes(branch))
+
+        if len(branches) == 0:
+            raise ValueError(
+                "non_linear_nodes must contain at least one branch."
+            )
+
+        return tuple(branches)
+
+    def _validate_branch_nodes(self, nodes: tuple) -> tuple[int, ...]:
+        """Validate one nonlinear branch and normalize negative indices."""
         if len(nodes) not in (1, 2):
             raise ValueError(
-                "non_linear_nodes must contain one or two node indices."
+                "Each nonlinear branch must contain one or two node indices."
             )
 
         normalized_nodes = []
         for node in nodes:
             if not isinstance(node, (int, np.integer)):
                 raise ValueError(
-                    "non_linear_nodes must contain integer indices."
+                    "Each nonlinear branch must contain integer indices."
                 )
 
             normalized = int(node)
@@ -146,11 +193,34 @@ class BBQ:
                 normalized += self.circuit_dimensions
             if normalized < 0 or normalized >= self.circuit_dimensions:
                 raise ValueError(
-                    "non_linear_nodes contains an index outside the circuit."
+                    "A nonlinear branch contains an index outside the circuit."
                 )
             normalized_nodes.append(normalized)
 
         return tuple(normalized_nodes)
+
+    def _branch_matrix(self) -> FloatArray:
+        """
+        Return branch-incidence matrix B matching the documented convention.
+
+        Each row corresponds to one nonlinear branch. For branch
+        ``(node_a, node_b)``, ``B[row, node_a] = -1`` and
+        ``B[row, node_b] = 1``. For branch ``(node,)``, ``B[row, node] = 1``.
+        """
+        B = np.zeros(
+            (len(self.nonlinear_branches), self.circuit_dimensions),
+            dtype=float,
+        )
+        for branch_index, branch in enumerate(self.nonlinear_branches):
+            if len(branch) == 2:
+                node_a, node_b = branch
+                B[branch_index, node_a] = -1.0
+                B[branch_index, node_b] = 1.0
+            else:
+                (node,) = branch
+                B[branch_index, node] = 1.0
+
+        return B
 
     def _capacitance_physical_subspace(
         self,
@@ -253,39 +323,42 @@ class BBQ:
             reduced vectors are the same modes expressed in the positive
             capacitance eigenbasis.
         """
-        reduced_l_inv = (
+        L_inv_reduced = (
             self._capacitance_basis.T
             @ self.L_inv_matrix
             @ self._capacitance_basis
         )
-        reduced_capacitance = np.diag(self._capacitance_eigenvalues)
+        C_reduced = np.diag(self._capacitance_eigenvalues)
 
-        eigenvalues, reduced_vectors = eigh(
-            reduced_l_inv,
-            reduced_capacitance,
+        omega_squared_all, U_reduced_all = eigh(
+            L_inv_reduced,
+            C_reduced,
         )
-        scale = float(np.max(np.abs(eigenvalues)))
+        scale = float(np.max(np.abs(omega_squared_all)))
         tolerance = (
             _MODE_RELATIVE_TOLERANCE * scale
             if scale > 0.0
             else _MODE_RELATIVE_TOLERANCE
         )
 
-        if np.any(eigenvalues < -tolerance):
+        if np.any(omega_squared_all < -tolerance):
             raise ValueError(
                 "L_inv_matrix produces negative omega^2 modes on the physical "
                 "capacitance subspace."
             )
 
-        positive_idx = np.isfinite(eigenvalues) & (eigenvalues > tolerance)
+        positive_idx = (
+            np.isfinite(omega_squared_all)
+            & (omega_squared_all > tolerance)
+        )
         if not np.any(positive_idx):
             raise ValueError("No positive finite circuit modes were found.")
 
-        omega_squared = eigenvalues[positive_idx]
-        reduced_vectors = reduced_vectors[:, positive_idx]
-        mode_vectors = self._capacitance_basis @ reduced_vectors
+        omega_squared = omega_squared_all[positive_idx]
+        U_reduced = U_reduced_all[:, positive_idx]
+        U = self._capacitance_basis @ U_reduced
 
-        return omega_squared, mode_vectors, reduced_vectors
+        return omega_squared, U, U_reduced
 
     def _linear_modes(self) -> FloatArray:
         """
@@ -309,29 +382,38 @@ class BBQ:
         """
         return self.linear_modes / (2.0 * np.pi * 1e9)
 
-    def _phase_zpf_list(self) -> FloatArray:
+    def _phase_zpf_matrix(self) -> FloatArray:
         """
-        Calculate branch phase zero-point fluctuations.
+        Calculate branch phase zero-point fluctuations as a matrix.
 
         Returns
         -------
         ndarray
-            Dimensionless phase fluctuations across ``non_linear_nodes``.
-            Reversing the branch direction flips the sign of every entry.
+            Branch-by-mode matrix of dimensionless phase fluctuations. The
+            rows follow ``nonlinear_branches`` and the columns follow
+            ``linear_modes``.
         """
         phi_0 = hbar / (2.0 * e)
         zpf_flux = np.sqrt(hbar / (2.0 * self.linear_modes))
+        branch_mode_amplitudes = self.branch_matrix @ self.mode_vectors
 
-        if len(self.non_linear_nodes) == 2:
-            node_a, node_b = self.non_linear_nodes
-            branch_vector = (
-                self.mode_vectors[node_b, :] - self.mode_vectors[node_a, :]
-            )
-        else:
-            (node,) = self.non_linear_nodes
-            branch_vector = self.mode_vectors[node, :]
+        return np.asarray(
+            branch_mode_amplitudes * zpf_flux[np.newaxis, :] / phi_0,
+            dtype=float,
+        )
 
-        return np.asarray(branch_vector * zpf_flux / phi_0, dtype=float)
+    def _phase_zpf_list(self) -> FloatArray:
+        """
+        Return phase ZPFs in the legacy single-branch-compatible shape.
+
+        For one nonlinear branch this is a vector with one entry per mode. For
+        multiple branches this is the same branch-by-mode matrix as
+        ``phase_zpf_matrix``.
+        """
+        if len(self.nonlinear_branches) == 1:
+            return self.phase_zpf_matrix[0, :]
+
+        return self.phase_zpf_matrix
 
     def plot_linear_modes(
         self,
@@ -370,7 +452,7 @@ class BBQ:
             label=[
                 (
                     rf"$f_{i} = {self.linear_modes_GHz[i]:.2f}$ GHz, "
-                    rf"$\varphi_{{zpf}} = {self.phase_zpf_list[i]:.1e}$"
+                    rf"$\varphi_{{zpf}} = {self._phase_zpf_label(i)}$"
                 )
                 for i in mode_indices
             ],
@@ -381,6 +463,19 @@ class BBQ:
         ax.set_title("Linear Modes of the Circuit")
         ax.legend()
         plt.show()
+
+    def _phase_zpf_label(self, mode_index: int) -> str:
+        """Return a compact phase-ZPF label for plotting."""
+        zpf_values = self.phase_zpf_matrix[:, mode_index]
+        if len(zpf_values) == 1:
+            return f"{zpf_values[0]:.1e}"
+
+        return np.array2string(
+            zpf_values,
+            precision=1,
+            separator=", ",
+            suppress_small=False,
+        )
 
     @property
     def selected_modes(self) -> list[int]:
@@ -502,14 +597,14 @@ class BBQ:
 
         return hamiltonian_0
 
-    @property
-    def Ej_suppression_factor(self) -> float:
+    def _Ej_suppression_factors(self) -> FloatArray:
         """
-        Josephson-energy renormalization from modes omitted from the basis.
+        Josephson-energy renormalization for each nonlinear branch.
 
         Returns
         -------
-        float
+        ndarray
+            One factor per nonlinear branch:
             ``exp(-0.5 * sum(phi_zpf_unselected**2))``.
         """
         self._require_selected_modes()
@@ -518,11 +613,31 @@ class BBQ:
             all_modes_indices,
             self.selected_modes,
         )
-        unselected_zpf = self.phase_zpf_list[unselected_modes_indices]
-        return float(np.exp(-0.5 * np.sum(unselected_zpf**2)))
+        unselected_zpf = self.phase_zpf_matrix[:, unselected_modes_indices]
+        return np.asarray(
+            np.exp(-0.5 * np.sum(unselected_zpf**2, axis=1)),
+            dtype=float,
+        )
 
     @property
-    def Ej_supression_factor(self) -> float:
+    def Ej_suppression_factor(self) -> float | FloatArray:
+        """
+        Josephson-energy renormalization from modes omitted from the basis.
+
+        Returns
+        -------
+        float or ndarray
+            A scalar for one nonlinear branch, or one factor per branch when
+            multiple nonlinear branches are configured.
+        """
+        factors = self._Ej_suppression_factors()
+        if len(factors) == 1:
+            return float(factors[0])
+
+        return factors
+
+    @property
+    def Ej_supression_factor(self) -> float | FloatArray:
         """
         Compatibility alias for :attr:`Ej_suppression_factor`.
 
@@ -532,26 +647,101 @@ class BBQ:
         return self.Ej_suppression_factor
 
     @property
-    def phase_operator_nl(self) -> list[FloatArray]:
+    def phase_operator_nl(self) -> list[FloatArray] | list[list[FloatArray]]:
         """
         Phase operators for selected modes on their truncated Fock spaces.
 
         Returns
         -------
-        list of ndarray
-            One dense phase operator per selected mode.
+        list
+            For one nonlinear branch, one dense phase operator per selected
+            mode. For multiple branches, one such list per branch.
         """
         self._require_hamiltonian_basis()
-        phase_operator_nl_list = []
+        branch_phase_operators = []
+        for branch_index in range(len(self.nonlinear_branches)):
+            phase_operator_nl_list = []
+            for idx, dimension in enumerate(self.dimensions):
+                mode_index = self.selected_modes[idx]
+                data = np.sqrt(np.arange(1, dimension))
+                phase_operator = (
+                    self.phase_zpf_matrix[branch_index, mode_index]
+                    * diags([data, data], [1, -1]).toarray()
+                )
+                phase_operator_nl_list.append(phase_operator)
+            branch_phase_operators.append(phase_operator_nl_list)
+
+        if len(branch_phase_operators) == 1:
+            return branch_phase_operators[0]
+
+        return branch_phase_operators
+
+    def _branch_phase_operator(self, branch_index: int) -> FloatArray:
+        """Return the full Hilbert-space phase operator for one branch."""
+        branch_index = self._validate_branch_index(branch_index)
+        phi_branch = np.zeros(
+            (self._total_dimension, self._total_dimension)
+        )
+
         for idx, dimension in enumerate(self.dimensions):
             mode_index = self.selected_modes[idx]
             data = np.sqrt(np.arange(1, dimension))
             phase_operator = (
-                self.phase_zpf_list[mode_index]
+                self.phase_zpf_matrix[branch_index, mode_index]
                 * diags([data, data], [1, -1]).toarray()
             )
-            phase_operator_nl_list.append(phase_operator)
-        return phase_operator_nl_list
+            factors = [
+                phase_operator if i == idx else np.eye(dim)
+                for i, dim in enumerate(self.dimensions)
+            ]
+            phi_branch += self._kron_all(factors)
+
+        return phi_branch
+
+    def _validate_branch_index(self, branch_index: int) -> int:
+        """Return a valid nonlinear-branch index or raise ``ValueError``."""
+        if not isinstance(branch_index, (int, np.integer)):
+            raise ValueError("Branch indices must be integers.")
+
+        normalized = int(branch_index)
+        if normalized < 0:
+            normalized += len(self.nonlinear_branches)
+        if normalized < 0 or normalized >= len(self.nonlinear_branches):
+            raise ValueError(
+                "Branch index is outside the available nonlinear branches."
+            )
+
+        return normalized
+
+    def _branch_parameter_array(
+        self,
+        values: float | Iterable[float],
+        name: str,
+    ) -> FloatArray:
+        """Return one scalar parameter value per nonlinear branch."""
+        if isinstance(values, (int, float, np.integer, np.floating)):
+            branch_values = np.full(
+                len(self.nonlinear_branches),
+                float(values),
+            )
+        elif (
+            isinstance(values, (str, bytes))
+            or not isinstance(values, Iterable)
+        ):
+            raise ValueError(
+                f"{name} must be a scalar or one value per nonlinear branch."
+            )
+        else:
+            branch_values = np.asarray(tuple(values), dtype=float)
+
+        if branch_values.shape != (len(self.nonlinear_branches),):
+            raise ValueError(
+                f"{name} must contain one value per nonlinear branch."
+            )
+        if not np.all(np.isfinite(branch_values)):
+            raise ValueError(f"{name} must contain only finite values.")
+
+        return branch_values
 
     @staticmethod
     def _kron_all(factors: list[FloatArray]) -> FloatArray:
@@ -561,49 +751,52 @@ class BBQ:
             factors,
         )
 
-    def hamiltonian_nl(self, Ej: float, phi_ext: float) -> FloatArray:
+    def hamiltonian_nl(
+        self,
+        Ej: float | Iterable[float],
+        phi_ext: float | Iterable[float],
+    ) -> FloatArray:
         """
         Calculate the nonlinear Josephson Hamiltonian in GHz.
 
         Parameters
         ----------
         Ej
-            Josephson energy in GHz.
+            Josephson energy in GHz. Use a scalar for one nonlinear branch, or
+            one value per branch when multiple branches are configured.
         phi_ext
-            External phase bias in radians.
+            External phase bias in radians. Use a scalar for one nonlinear
+            branch, or one value per branch when multiple branches are
+            configured.
 
         Returns
         -------
         ndarray
             Dense nonlinear Hamiltonian
-            ``-Ej * (suppression*cos(phi + phi_ext) + phi**2/2)``.
+            ``sum_b -Ej_b * (suppression_b*cos(phi_b + phi_ext_b)
+            + phi_b**2/2)``.
         """
         self._require_hamiltonian_basis()
-        phi_nl_total = np.zeros(
+        Ej_values = self._branch_parameter_array(Ej, "Ej")
+        phi_ext_values = self._branch_parameter_array(phi_ext, "phi_ext")
+        suppression_factors = self._Ej_suppression_factors()
+        hamiltonian_nl = np.zeros(
             (self._total_dimension, self._total_dimension)
         )
-        phase_operators = self.phase_operator_nl
-
-        for idx, phase_operator in enumerate(phase_operators):
-            factors = [
-                phase_operator if i == idx else np.eye(dim)
-                for i, dim in enumerate(self.dimensions)
-            ]
-            phi_nl_total += self._kron_all(factors)
-
         identity = np.eye(self._total_dimension)
-        cos_term = np.asarray(
-            cosm(phi_nl_total + phi_ext * identity),
-            dtype=float,
-        )
-        return np.asarray(
-            -Ej
-            * (
-                self.Ej_suppression_factor * cos_term
-                + 0.5 * phi_nl_total @ phi_nl_total
-            ),
-            dtype=float,
-        )
+
+        for branch_index, Ej_value in enumerate(Ej_values):
+            phi_branch = self._branch_phase_operator(branch_index)
+            cos_term = np.asarray(
+                cosm(phi_branch + phi_ext_values[branch_index] * identity),
+                dtype=float,
+            )
+            hamiltonian_nl += -Ej_value * (
+                suppression_factors[branch_index] * cos_term
+                + 0.5 * phi_branch @ phi_branch
+            )
+
+        return np.asarray(hamiltonian_nl, dtype=float)
 
 
 if __name__ == "__main__":

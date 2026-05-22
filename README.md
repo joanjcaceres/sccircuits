@@ -195,11 +195,14 @@ bbq = BBQ(C_matrix, L_inv_matrix, non_linear_nodes=(0, 1))
 print("Angular frequencies (rad/s):", bbq.linear_modes)
 print("Mode frequencies (GHz):", bbq.linear_modes_GHz)
 print("Branch phase ZPF:", bbq.phase_zpf_list)
+print("Branch-by-mode phase ZPF:", bbq.phase_zpf_matrix)
 ```
 
 For `non_linear_nodes=(node_a, node_b)`, `BBQ` uses branch phase
 `Phi_b - Phi_a`. Reversing the tuple flips the sign of `phase_zpf_list` while
-leaving the mode frequencies unchanged.
+leaving the mode frequencies unchanged. For multiple nonlinear branches, pass
+a list of branch tuples such as `non_linear_nodes=[(0, 1), (1, 2)]`; in that
+case `phase_zpf_matrix` has one row per branch.
 
 You can also generate `C_matrix` and `L_inv_matrix` with the companion
 [`bbq-circuit-designer`](https://github.com/joanjcaceres/bbq-circuit-designer)

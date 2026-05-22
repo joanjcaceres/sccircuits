@@ -6,6 +6,11 @@ The goal is to turn a capacitance matrix `C` and an inverse inductance matrix
 normal-mode frequencies and phase zero-point fluctuations across a nonlinear
 branch.
 
+The code names intentionally follow the symbols below: `C_matrix` is
+$\mathbf{C}$, `L_inv_matrix` is $\mathbf{L}^{-1}$, `mode_vectors` is
+$\mathbf{U}$, `branch_matrix` is $\mathbf{B}$, and `phase_zpf_matrix` is the
+branch-by-mode matrix $\varphi_{\mathrm{zpf}}$.
+
 ## Linear Circuit
 
 Use node fluxes $\Phi$. The linearized Lagrangian is
@@ -146,10 +151,28 @@ $$
 Reversing the branch direction flips the sign of every
 $\varphi_{\mathrm{zpf}}$ value and leaves the frequencies unchanged.
 
+For multiple nonlinear branches, collect the branch directions into a matrix
+$\mathbf{B}$. Each row is one branch. For branch `(node_a, node_b)`,
+$B_{r,node_a}=-1$ and $B_{r,node_b}=1$. For branch `(node,)`, the row contains
+$B_{r,node}=1$. Then the branch-by-mode zero-point fluctuation matrix is
+
+$$
+\varphi_{\mathrm{zpf}}^{r,k}
+=
+\frac{(\mathbf{B}\mathbf{U})_{r,k}}{\varphi_0}
+\sqrt{\frac{\hbar}{2\omega_k}}.
+$$
+
+In `BBQ`, this matrix is available as `phase_zpf_matrix` with shape
+`(number_of_branches, number_of_modes)`. The older `phase_zpf_list` attribute
+remains a one-dimensional vector when there is only one nonlinear branch. When
+multiple branches are configured, `phase_zpf_list` has the same branch-by-mode
+shape as `phase_zpf_matrix`.
+
 ## Units
 
 - `linear_modes` stores angular frequencies $\omega_k$ in rad/s.
 - `linear_modes_GHz` stores $\omega_k/(2\pi)$ in GHz.
-- `phase_zpf_list` is dimensionless.
+- `phase_zpf_matrix` and `phase_zpf_list` are dimensionless.
 - `hamiltonian_0()` and `hamiltonian_nl()` return dense Hamiltonian matrices in
   GHz.

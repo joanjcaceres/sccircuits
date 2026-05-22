@@ -122,6 +122,34 @@ def test_branch_reversal_flips_phase_zpf_only():
     assert np.allclose(forward.phase_zpf_list, -reverse.phase_zpf_list)
 
 
+def test_multiple_nonlinear_branches_return_branch_by_mode_zpfs():
+    C_matrix = np.eye(3)
+    L_inv_matrix = np.diag([2.0, 3.0, 5.0])
+
+    bbq = BBQ(
+        C_matrix,
+        L_inv_matrix,
+        non_linear_nodes=[(0, 1), (2,), (1, 0)],
+    )
+
+    phi_0 = hbar / (2.0 * e)
+    expected = (
+        bbq.branch_matrix
+        @ bbq.mode_vectors
+        * np.sqrt(hbar / (2.0 * bbq.linear_modes))[np.newaxis, :]
+        / phi_0
+    )
+
+    assert bbq.nonlinear_branches == ((0, 1), (2,), (1, 0))
+    assert bbq.phase_zpf_matrix.shape == (3, 3)
+    assert np.allclose(bbq.phase_zpf_list, expected)
+    assert np.allclose(bbq.phase_zpf_matrix, expected)
+    assert np.allclose(
+        bbq.phase_zpf_matrix[0, :],
+        -bbq.phase_zpf_matrix[2, :],
+    )
+
+
 def test_plot_linear_modes_uses_normalized_mode_indices(monkeypatch):
     C_matrix = np.eye(3)
     L_inv_matrix = np.diag([2.0, 3.0, 5.0])
@@ -150,6 +178,40 @@ def test_hamiltonian_0_matches_harmonic_diagonal():
     expected = np.diag(bbq.linear_modes_GHz[0] * (np.arange(4) + 0.5))
 
     assert np.allclose(bbq.hamiltonian_0(), expected)
+
+
+def test_hamiltonian_nl_sums_multiple_nonlinear_branches():
+    C_matrix = np.eye(2)
+    L_inv_matrix = np.diag([2.0, 3.0])
+    Ej_values = np.array([1.3, 0.7])
+    phi_ext_values = np.array([0.27, -0.12])
+    dimension = 4
+
+    bbq = BBQ(C_matrix, L_inv_matrix, non_linear_nodes=[(0,), (1,)])
+    bbq.selected_modes = [0]
+    bbq.dimensions = dimension
+
+    data = np.sqrt(np.arange(1, dimension))
+    identity = np.eye(dimension)
+    expected = np.zeros((dimension, dimension))
+    suppression_factors = np.exp(
+        -0.5 * np.sum(bbq.phase_zpf_matrix[:, [1]] ** 2, axis=1)
+    )
+    for branch_index, Ej in enumerate(Ej_values):
+        phi_operator = (
+            bbq.phase_zpf_matrix[branch_index, 0]
+            * diags([data, data], [1, -1]).toarray()
+        )
+        expected += -Ej * (
+            suppression_factors[branch_index]
+            * cosm(phi_operator + phi_ext_values[branch_index] * identity)
+            + 0.5 * phi_operator @ phi_operator
+        )
+
+    assert np.allclose(
+        bbq.hamiltonian_nl(Ej=Ej_values, phi_ext=phi_ext_values),
+        expected,
+    )
 
 
 def test_unconfigured_selected_modes_and_dimensions_raise_clear_errors():
@@ -232,6 +294,12 @@ def test_hamiltonian_nl_matches_manual_matrix_cosine():
             np.eye(2),
             (0, 2),
             "outside the circuit",
+        ),
+        (
+            np.eye(2),
+            np.eye(2),
+            [(0, 1), (0, 1, 2)],
+            "one or two node indices",
         ),
     ],
 )
