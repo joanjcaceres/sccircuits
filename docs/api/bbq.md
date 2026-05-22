@@ -32,7 +32,7 @@ print(bbq.phase_zpf_list)    # dimensionless branch phase ZPF values
 ```
 
 The nonlinear branch convention is `non_linear_nodes=(node_a, node_b)`, with
-phase \( \Phi_b - \Phi_a \). Reversing the tuple flips the sign of
+phase $\Phi_b - \Phi_a$. Reversing the tuple flips the sign of
 `phase_zpf_list`.
 
 ## Hamiltonians
@@ -50,7 +50,7 @@ H = H0 + Hnl
 ```
 
 Hamiltonian energies are in GHz. `hamiltonian_0()` includes the harmonic
-zero-point contribution \( f_k(n_k + 1/2) \). When analyzing transition
+zero-point contribution $f_k(n_k + 1/2)$. When analyzing transition
 frequencies, subtract the ground-state energy from each spectrum.
 
 ## Validation Rules
