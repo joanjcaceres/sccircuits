@@ -1,5 +1,6 @@
 """Numerical characterization tests for the BBQ class."""
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 from scipy.constants import e, hbar
@@ -119,6 +120,24 @@ def test_branch_reversal_flips_phase_zpf_only():
 
     assert np.allclose(forward.linear_modes, reverse.linear_modes)
     assert np.allclose(forward.phase_zpf_list, -reverse.phase_zpf_list)
+
+
+def test_plot_linear_modes_uses_normalized_mode_indices(monkeypatch):
+    C_matrix = np.eye(3)
+    L_inv_matrix = np.diag([2.0, 3.0, 5.0])
+    bbq = BBQ(C_matrix, L_inv_matrix, non_linear_nodes=(0, 1))
+    monkeypatch.setattr(plt, "show", lambda: None)
+
+    try:
+        bbq.plot_linear_modes(which=-1)
+        legend_labels = [
+            label.get_text()
+            for label in plt.gca().get_legend().get_texts()
+        ]
+    finally:
+        plt.close("all")
+
+    assert legend_labels[0].startswith("$f_2")
 
 
 def test_hamiltonian_0_matches_harmonic_diagonal():

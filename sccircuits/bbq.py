@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from functools import reduce
-from typing import Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -336,7 +335,7 @@ class BBQ:
 
     def plot_linear_modes(
         self,
-        which: Union[list[int], int] = 0,
+        which: Iterable[int] | int = 0,
     ) -> None:
         """
         Plot selected C-normalized linear mode shapes.
@@ -346,22 +345,34 @@ class BBQ:
         which
             Mode index or list of mode indices to plot.
         """
-        if isinstance(which, int):
-            which = [which]
+        if isinstance(which, (int, np.integer)):
+            mode_indices = [self._validate_mode_index(which)]
+        elif (
+            isinstance(which, (str, bytes))
+            or not isinstance(which, Iterable)
+        ):
+            raise ValueError(
+                "which must be an integer or sequence of indices."
+            )
+        else:
+            mode_indices = [
+                self._validate_mode_index(mode_index)
+                for mode_index in which
+            ]
 
-        for mode_index in which:
-            self._validate_mode_index(mode_index)
+        if len(mode_indices) == 0:
+            raise ValueError("which must contain at least one mode index.")
 
         fig, ax = plt.subplots(figsize=(10, 6))
         ax.plot(
-            self.mode_vectors[:, which],
+            self.mode_vectors[:, mode_indices],
             linestyle="-",
             label=[
                 (
                     rf"$f_{i} = {self.linear_modes_GHz[i]:.2f}$ GHz, "
                     rf"$\varphi_{{zpf}} = {self.phase_zpf_list[i]:.1e}$"
                 )
-                for i in which
+                for i in mode_indices
             ],
         )
         ax.axhline(0, color="gray", linestyle="--", linewidth=0.5)
@@ -449,7 +460,7 @@ class BBQ:
     def _require_selected_modes(self) -> None:
         if not hasattr(self, "_selected_modes"):
             raise ValueError(
-                "Set selected_modes before configuring dimensions."
+                "Set selected_modes before using mode-dependent properties."
             )
 
     def _require_hamiltonian_basis(self) -> None:
