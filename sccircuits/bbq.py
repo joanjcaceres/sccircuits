@@ -801,7 +801,7 @@ class BBQ:
 
 if __name__ == "__main__":
     # Example usage
-    from .utilities import El_to_L
+    from sccircuits.utilities import El_to_L
 
     N = 120
     Cjb = 40e-15
