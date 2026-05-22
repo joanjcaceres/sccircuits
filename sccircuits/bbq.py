@@ -21,37 +21,28 @@ _MODE_RELATIVE_TOLERANCE = 1e-12
 
 
 class BBQ:
-    r"""
+    """
     Black-box quantization for superconducting circuits.
 
-    ``BBQ`` starts from a linear circuit written in node-flux coordinates,
+    ``BBQ`` starts from the capacitance matrix ``C_matrix`` and inverse
+    inductance matrix ``L_inv_matrix`` of a linearized circuit in node-flux
+    coordinates. The normal modes are computed from the generalized eigenvalue
+    problem:
 
-    .. math::
+        L_inv_matrix @ v_k = omega_k**2 * C_matrix @ v_k
 
-        \mathcal{L}
-        =
-        \frac{1}{2}\dot{\Phi}^T C \dot{\Phi}
-        -
-        \frac{1}{2}\Phi^T L^{-1}\Phi.
+    The columns of ``mode_vectors`` form the matrix ``U`` and are normalized
+    as:
 
-    Its normal modes solve the generalized eigenvalue problem
+        U.T @ C_matrix @ U = I
 
-    .. math::
+    With ``non_linear_nodes=(node_a, node_b)``, the nonlinear branch phase uses
+    the direction ``Phi_b - Phi_a``. Reversing the node order reverses the sign
+    of ``phase_zpf_list``.
 
-        L^{-1} v_k = \omega_k^2 C v_k.
-
-    The returned mode vectors are normalized so that ``U.T @ C @ U = I``.
-    With that convention, the phase zero-point fluctuation across the branch
-    ``non_linear_nodes=(node_a, node_b)`` is
-
-    .. math::
-
-        \varphi_{\mathrm{zpf}}^{k}
-        =
-        \frac{U_{node_b,k} - U_{node_a,k}}{\varphi_0}
-        \sqrt{\frac{\hbar}{2\omega_k}},
-        \qquad
-        \varphi_0=\frac{\hbar}{2e}.
+    For the full derivation, rendered equations, units, and branch convention,
+    see ``docs/theory/circuit-matrix-quantization.md`` and
+    ``docs/api/bbq.md`` in the project documentation.
 
     Parameters
     ----------
