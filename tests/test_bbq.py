@@ -162,6 +162,7 @@ def test_multiple_nonlinear_branches_return_branch_by_mode_zpfs():
     )
 
     assert bbq.nonlinear_branches == ((0, 1), (2,), (1, 0))
+    assert bbq.branch_phase_nodes == ((1, 0), (2, None), (0, 1))
     assert bbq.branch_phase_zpfs.shape == (3, 3)
     assert np.allclose(bbq.branch_phase_zpfs, expected)
     assert np.allclose(
@@ -201,6 +202,7 @@ def test_junction_records_ground_jj_matches_single_branch_api():
         from_junctions.branch_phase_zpfs,
         direct.branch_phase_zpfs,
     )
+    assert from_junctions.branch_phase_nodes == ((0, None),)
     assert np.allclose(from_junctions.josephson_energies_ghz, [4.2])
 
 
@@ -235,6 +237,8 @@ def test_junction_records_ground_phase_reversal_flips_zpf_row():
 
     assert np.allclose(forward.angular_frequencies, reverse.angular_frequencies)
     assert np.allclose(forward.branch_phase_zpfs, -reverse.branch_phase_zpfs)
+    assert forward.branch_phase_nodes == ((0, None),)
+    assert reverse.branch_phase_nodes == ((None, 0),)
     assert np.allclose(reverse.branch_incidence_matrix, [[-1.0]])
 
 
@@ -301,8 +305,45 @@ def test_junction_records_multiple_jjs_return_branch_rows_and_energies():
 
     assert bbq.branch_phase_zpfs.shape == (2, 3)
     assert bbq.branch_incidence_matrix.shape == (2, 3)
+    assert bbq.branch_phase_nodes == ((1, 0), (2, None))
     assert bbq.josephson_energies_ghz is not None
     assert np.allclose(bbq.josephson_energies_ghz, [1.3, 0.7])
+
+
+def test_junction_records_outputs_follow_input_row_order():
+    capacitance_matrix = np.eye(3)
+    inverse_inductance_matrix = np.diag([2.0, 3.0, 5.0])
+    junction_records = [
+        _josephson_branch_record(
+            edge_id=8,
+            matrix_nodes=(2, None),
+            phase_positive_index=None,
+            phase_negative_index=2,
+            phase_sign=-1,
+            E_j_GHz=0.7,
+        ),
+        _josephson_branch_record(
+            edge_id=7,
+            matrix_nodes=(0, 1),
+            phase_positive_index=1,
+            phase_negative_index=0,
+            phase_sign=1,
+            E_j_GHz=1.3,
+        ),
+    ]
+
+    bbq = BBQ(
+        capacitance_matrix,
+        inverse_inductance_matrix,
+        junctions=junction_records,
+    )
+
+    assert bbq.branch_phase_nodes == ((None, 2), (1, 0))
+    assert np.allclose(
+        bbq.branch_incidence_matrix,
+        [[0.0, 0.0, -1.0], [-1.0, 1.0, 0.0]],
+    )
+    assert np.allclose(bbq.josephson_energies_ghz, [0.7, 1.3])
 
 
 def test_junction_records_phase_reversal_flips_only_selected_junction():

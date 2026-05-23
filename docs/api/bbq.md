@@ -32,12 +32,15 @@ bbq = BBQ(
 
 print(bbq.angular_frequencies)   # angular frequencies in rad/s
 print(bbq.frequencies_ghz)       # ordinary frequencies in GHz
+print(bbq.branch_phase_nodes)    # (positive_node, negative_node), None means ground
 print(bbq.branch_phase_zpfs)     # branch-by-mode phase ZPF matrix
 ```
 
 The nonlinear branch convention is `nonlinear_branches=(node_a, node_b)`, with
 phase $\Phi_b - \Phi_a$. Reversing the tuple flips the sign of
-`branch_phase_zpfs`.
+`branch_phase_zpfs`. The normalized phase direction is also available as
+`branch_phase_nodes`, where each row is `(positive_node, negative_node)` and
+the phase is $\Phi_\mathrm{positive} - \Phi_\mathrm{negative}$.
 
 For multiple nonlinear branches, pass a list of branch tuples:
 
@@ -71,17 +74,24 @@ bbq = BBQ(
 )
 
 print(bbq.frequencies_ghz)
+print(bbq.branch_phase_nodes)      # one row per input junction record
 print(bbq.branch_phase_zpfs)       # shape: (junctions, modes)
 print(bbq.josephson_energies_ghz)  # one value per junction, if exported
 ```
+
+`BBQ` treats these records as numerical branch definitions. Web-specific
+identifiers such as `edge_id` and `project_nodes` are not retained; callers that
+need to map results back to a drawing should keep the original `junctions` list
+and use row order. The rows of `branch_phase_nodes`, `branch_incidence_matrix`,
+`branch_phase_zpfs`, and `josephson_energies_ghz` correspond to the rows of
+`junctions`.
 
 The only required fields are `phase_positive_index` and
 `phase_negative_index`; `None` means the grounded side. `matrix_nodes` is
 validated when present. If every record includes `E_j_GHz`, or every record
 includes `L_j` from which `E_j_GHz` can be computed,
-`bbq.josephson_energies_ghz` is populated in the same row order as
-`branch_phase_zpfs`. Hamiltonian construction remains explicit: pass Josephson
-energies to `hamiltonian_nonlinear(...)`.
+`bbq.josephson_energies_ghz` is populated. Hamiltonian construction remains
+explicit: pass Josephson energies to `hamiltonian_nonlinear(...)`.
 
 ## Hamiltonians
 
@@ -137,6 +147,7 @@ workflow:
 - `capacitance_matrix`
 - `inverse_inductance_matrix`
 - `nonlinear_branches`
+- `branch_phase_nodes`
 - `branch_incidence_matrix`
 - `angular_frequencies_squared`
 - `angular_frequencies`

@@ -213,7 +213,10 @@ You can also generate `capacitance_matrix` and `inverse_inductance_matrix` with 
 [`bbq-circuit-designer`](https://github.com/joanjcaceres/bbq-circuit-designer)
 GUI. When the snippet includes Josephson junction records, use
 `BBQ(capacitance_matrix, inverse_inductance_matrix, junctions=junctions)`
-to preserve one phase-ZPF row and one Josephson energy per junction.
+to compute one phase-ZPF row and one Josephson energy per junction. `BBQ`
+keeps this as a numerical workflow: the rows of `branch_phase_zpfs` follow the
+input `junctions` order, and the drawing layer should keep the original records
+when it needs to map results back to edges.
 
 ### Interactive Point Picking
 

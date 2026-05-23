@@ -40,6 +40,11 @@ class BBQ:
     multiple nonlinear branches. Reversing a branch tuple reverses the sign of
     that branch's zero-point phase fluctuations.
 
+    ``BBQ`` remains a numerical object when cQEDraw junction records are used:
+    web-specific identifiers are not retained. Row order is the contract:
+    ``branch_phase_nodes[i]``, ``branch_phase_zpfs[i]``, and
+    ``josephson_energies_ghz[i]`` correspond to ``junctions[i]``.
+
     For the full derivation, rendered equations, units, and branch convention,
     see ``docs/theory/circuit-matrix-quantization.md`` and
     ``docs/api/bbq.md`` in the project documentation.
@@ -60,7 +65,7 @@ class BBQ:
         Optional cQEDraw-style Josephson junction records. Each record must
         include ``phase_positive_index`` and ``phase_negative_index``; ``None``
         means ground. When ``junctions`` is provided, do not also pass
-        ``nonlinear_branches``.
+        ``nonlinear_branches``. Records are consumed in input order.
 
     Attributes
     ----------
@@ -70,6 +75,10 @@ class BBQ:
         Frequencies ``omega_k / (2*pi)`` in GHz.
     normal_mode_vectors
         C-normalized normal-mode vectors as columns.
+    branch_phase_nodes
+        One ``(positive_node, negative_node)`` pair per nonlinear branch. The
+        branch phase is ``Phi_positive - Phi_negative`` and ``None`` means
+        ground.
     branch_phase_zpfs
         Branch-by-mode matrix of dimensionless phase zero-point fluctuations.
     josephson_energies_ghz
@@ -123,6 +132,7 @@ class BBQ:
         if junctions is not None:
             (
                 self.nonlinear_branches,
+                self.branch_phase_nodes,
                 self.branch_incidence_matrix,
                 josephson_energies_ghz,
             ) = self._junction_data_from_records(junctions, self.node_count)
@@ -131,6 +141,9 @@ class BBQ:
                 nonlinear_branches = (-1, 0)
             self.nonlinear_branches = self._validate_nonlinear_branches(
                 nonlinear_branches
+            )
+            self.branch_phase_nodes = (
+                self._branch_phase_nodes_from_nonlinear_branches()
             )
             self.branch_incidence_matrix = self._branch_incidence_matrix()
 
@@ -171,6 +184,7 @@ class BBQ:
         node_count: int,
     ) -> tuple[
         tuple[tuple[int, ...], ...],
+        tuple[tuple[int | None, int | None], ...],
         FloatArray,
         FloatArray | None,
     ]:
@@ -190,6 +204,7 @@ class BBQ:
             )
 
         nonlinear_branches = []
+        branch_phase_nodes: list[tuple[int | None, int | None]] = []
         josephson_energies: list[float] = []
         has_any_josephson_energy = False
         has_missing_josephson_energy = False
@@ -236,6 +251,9 @@ class BBQ:
                     phase_negative_index,
                 )
             )
+            branch_phase_nodes.append(
+                (phase_positive_index, phase_negative_index)
+            )
 
             josephson_energy = cls._record_josephson_energy_ghz(
                 record,
@@ -259,6 +277,7 @@ class BBQ:
         )
         return (
             tuple(nonlinear_branches),
+            tuple(branch_phase_nodes),
             B,
             josephson_energy_array,
         )
@@ -539,24 +558,39 @@ class BBQ:
         """
         Return branch-incidence matrix B matching the documented convention.
 
-        Each row corresponds to one nonlinear branch. For branch
-        ``(node_a, node_b)``, ``B[row, node_a] = -1`` and
-        ``B[row, node_b] = 1``. For branch ``(node,)``, ``B[row, node] = 1``.
+        Each row corresponds to one nonlinear branch and follows
+        ``branch_phase_nodes``. For ``(positive, negative)``,
+        ``B[row, positive] = 1`` and ``B[row, negative] = -1``. ``None`` means
+        ground.
         """
         B = np.zeros(
             (len(self.nonlinear_branches), self.node_count),
             dtype=float,
         )
-        for branch_index, branch in enumerate(self.nonlinear_branches):
-            if len(branch) == 2:
-                node_a, node_b = branch
-                B[branch_index, node_a] = -1.0
-                B[branch_index, node_b] = 1.0
-            else:
-                (node,) = branch
-                B[branch_index, node] = 1.0
+        for branch_index, (positive, negative) in enumerate(
+            self.branch_phase_nodes
+        ):
+            if negative is not None:
+                B[branch_index, negative] -= 1.0
+            if positive is not None:
+                B[branch_index, positive] += 1.0
 
         return B
+
+    def _branch_phase_nodes_from_nonlinear_branches(
+        self,
+    ) -> tuple[tuple[int | None, int | None], ...]:
+        """Return phase nodes for the manual ``nonlinear_branches`` API."""
+        phase_nodes: list[tuple[int | None, int | None]] = []
+        for branch in self.nonlinear_branches:
+            if len(branch) == 2:
+                node_a, node_b = branch
+                phase_nodes.append((node_b, node_a))
+            else:
+                (node,) = branch
+                phase_nodes.append((node, None))
+
+        return tuple(phase_nodes)
 
     def _capacitance_physical_subspace(
         self,
@@ -675,7 +709,7 @@ class BBQ:
         -------
         ndarray
             Branch-by-mode matrix of dimensionless phase fluctuations. The
-            rows follow ``nonlinear_branches`` and the columns follow
+            rows follow ``branch_phase_nodes`` and the columns follow
             ``angular_frequencies``.
         """
         phi_0 = hbar / (2.0 * e)
