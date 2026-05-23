@@ -3,6 +3,8 @@ site_description: Superconducting circuit analysis and quantization tools
 site_url: https://joanjcaceres.github.io/sccircuits/
 repo_url: https://github.com/joanjcaceres/sccircuits
 repo_name: joanjcaceres/sccircuits
+exclude_docs: |
+  _build/
 
 theme:
   name: material
