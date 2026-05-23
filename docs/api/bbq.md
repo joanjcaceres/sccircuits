@@ -54,6 +54,35 @@ print(bbq.branch_phase_zpfs.shape)  # (number_of_branches, number_of_modes)
 For one nonlinear branch, `branch_phase_zpfs` still has two axes; its shape is
 `(1, number_of_modes)`.
 
+## cQEDraw Josephson Junction Records
+
+cQEDraw snippets can export Josephson junction records with the matrix indices,
+phase direction, Josephson inductance, and Josephson energy for each junction.
+Pass those records directly with `junctions=`:
+
+```python
+capacitance_matrix, inverse_inductance_matrix = circuit_matrices(params)
+junctions = josephson_branches(params)
+
+bbq = BBQ(
+    capacitance_matrix,
+    inverse_inductance_matrix,
+    junctions=junctions,
+)
+
+print(bbq.frequencies_ghz)
+print(bbq.branch_phase_zpfs)       # shape: (junctions, modes)
+print(bbq.josephson_energies_ghz)  # one value per junction, if exported
+```
+
+The only required fields are `phase_positive_index` and
+`phase_negative_index`; `None` means the grounded side. `matrix_nodes` is
+validated when present. If every record includes `E_j_GHz`, or every record
+includes `L_j` from which `E_j_GHz` can be computed,
+`bbq.josephson_energies_ghz` is populated in the same row order as
+`branch_phase_zpfs`. Hamiltonian construction remains explicit: pass Josephson
+energies to `hamiltonian_nonlinear(...)`.
+
 ## Hamiltonians
 
 After inspecting the modes, choose the modes to retain and the Hilbert-space
@@ -114,6 +143,7 @@ workflow:
 - `frequencies_ghz`
 - `normal_mode_vectors`
 - `branch_phase_zpfs`
+- `josephson_energies_ghz`
 - `selected_mode_indices`
 - `truncation_dimensions`
 - `branch_phase_operators`

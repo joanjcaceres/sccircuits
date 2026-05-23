@@ -10,6 +10,30 @@ from scipy.sparse import diags
 from sccircuits import BBQ
 
 
+def _josephson_branch_record(
+    *,
+    edge_id=7,
+    project_nodes=(101, 102),
+    matrix_nodes=(0, None),
+    phase_positive_index=0,
+    phase_negative_index=None,
+    phase_sign=1,
+    L_j=7.0e-9,
+    E_j_GHz=3.1,
+):
+    return {
+        "edge_id": edge_id,
+        "project_nodes": project_nodes,
+        "matrix_nodes": matrix_nodes,
+        "phase_positive_index": phase_positive_index,
+        "phase_negative_index": phase_negative_index,
+        "phase_sign": phase_sign,
+        "inductance_expr": "Lj",
+        "L_j": L_j,
+        "E_j_GHz": E_j_GHz,
+    }
+
+
 def test_single_mode_lc_frequency_and_units():
     capacitance = 2.0e-15
     inductance = 7.0e-9
@@ -144,6 +168,209 @@ def test_multiple_nonlinear_branches_return_branch_by_mode_zpfs():
         bbq.branch_phase_zpfs[0, :],
         -bbq.branch_phase_zpfs[2, :],
     )
+
+
+def test_junction_records_ground_jj_matches_single_branch_api():
+    capacitance_matrix = np.array([[2.0e-15]])
+    inverse_inductance_matrix = np.array([[1.0 / 7.0e-9]])
+    branch_record = _josephson_branch_record(
+        edge_id=11,
+        matrix_nodes=[0, None],
+        phase_positive_index=0,
+        phase_negative_index=None,
+        phase_sign=1,
+        E_j_GHz=4.2,
+    )
+
+    direct = BBQ(
+        capacitance_matrix,
+        inverse_inductance_matrix,
+        nonlinear_branches=(0,),
+    )
+    from_junctions = BBQ(
+        capacitance_matrix,
+        inverse_inductance_matrix,
+        junctions=[branch_record],
+    )
+
+    assert np.allclose(
+        from_junctions.angular_frequencies,
+        direct.angular_frequencies,
+    )
+    assert np.allclose(
+        from_junctions.branch_phase_zpfs,
+        direct.branch_phase_zpfs,
+    )
+    assert np.allclose(from_junctions.josephson_energies_ghz, [4.2])
+
+
+def test_junction_records_ground_phase_reversal_flips_zpf_row():
+    capacitance_matrix = np.array([[2.0e-15]])
+    inverse_inductance_matrix = np.array([[1.0 / 7.0e-9]])
+
+    forward = BBQ(
+        capacitance_matrix,
+        inverse_inductance_matrix,
+        junctions=[
+            _josephson_branch_record(
+                matrix_nodes=(0, None),
+                phase_positive_index=0,
+                phase_negative_index=None,
+                phase_sign=1,
+            )
+        ],
+    )
+    reverse = BBQ(
+        capacitance_matrix,
+        inverse_inductance_matrix,
+        junctions=[
+            _josephson_branch_record(
+                matrix_nodes=(0, None),
+                phase_positive_index=None,
+                phase_negative_index=0,
+                phase_sign=-1,
+            )
+        ],
+    )
+
+    assert np.allclose(forward.angular_frequencies, reverse.angular_frequencies)
+    assert np.allclose(forward.branch_phase_zpfs, -reverse.branch_phase_zpfs)
+    assert np.allclose(reverse.branch_incidence_matrix, [[-1.0]])
+
+
+def test_junction_records_floating_jj_matches_branch_tuple_api():
+    capacitance_matrix = np.array([[2.0, 0.2], [0.2, 1.5]]) * 1e-15
+    inverse_inductance_matrix = np.array([[4.0, -1.0], [-1.0, 3.0]]) * 1e9
+    branch_record = _josephson_branch_record(
+        matrix_nodes=(0, 1),
+        phase_positive_index=1,
+        phase_negative_index=0,
+        phase_sign=1,
+    )
+
+    direct = BBQ(
+        capacitance_matrix,
+        inverse_inductance_matrix,
+        nonlinear_branches=(0, 1),
+    )
+    from_junctions = BBQ(
+        capacitance_matrix,
+        inverse_inductance_matrix,
+        junctions=[branch_record],
+    )
+
+    assert np.allclose(
+        from_junctions.angular_frequencies,
+        direct.angular_frequencies,
+    )
+    assert np.allclose(
+        from_junctions.branch_phase_zpfs,
+        direct.branch_phase_zpfs,
+    )
+
+
+def test_junction_records_multiple_jjs_return_branch_rows_and_energies():
+    capacitance_matrix = np.eye(3)
+    inverse_inductance_matrix = np.diag([2.0, 3.0, 5.0])
+    junction_records = [
+        _josephson_branch_record(
+            edge_id=7,
+            project_nodes=(101, 102),
+            matrix_nodes=(0, 1),
+            phase_positive_index=1,
+            phase_negative_index=0,
+            phase_sign=1,
+            E_j_GHz=1.3,
+        ),
+        _josephson_branch_record(
+            edge_id=8,
+            project_nodes=(103, None),
+            matrix_nodes=(2, None),
+            phase_positive_index=2,
+            phase_negative_index=None,
+            phase_sign=1,
+            E_j_GHz=0.7,
+        ),
+    ]
+
+    bbq = BBQ(
+        capacitance_matrix,
+        inverse_inductance_matrix,
+        junctions=junction_records,
+    )
+
+    assert bbq.branch_phase_zpfs.shape == (2, 3)
+    assert bbq.branch_incidence_matrix.shape == (2, 3)
+    assert bbq.josephson_energies_ghz is not None
+    assert np.allclose(bbq.josephson_energies_ghz, [1.3, 0.7])
+
+
+def test_junction_records_phase_reversal_flips_only_selected_junction():
+    capacitance_matrix = np.eye(2)
+    inverse_inductance_matrix = np.diag([2.0, 3.0])
+    forward = BBQ(
+        capacitance_matrix,
+        inverse_inductance_matrix,
+        junctions=[
+            _josephson_branch_record(
+                matrix_nodes=(0, 1),
+                phase_positive_index=1,
+                phase_negative_index=0,
+                phase_sign=1,
+            ),
+            _josephson_branch_record(
+                edge_id=8,
+                matrix_nodes=(1, None),
+                phase_positive_index=1,
+                phase_negative_index=None,
+                phase_sign=1,
+            ),
+        ],
+    )
+    reverse_first = BBQ(
+        capacitance_matrix,
+        inverse_inductance_matrix,
+        junctions=[
+            _josephson_branch_record(
+                matrix_nodes=(0, 1),
+                phase_positive_index=0,
+                phase_negative_index=1,
+                phase_sign=-1,
+            ),
+            _josephson_branch_record(
+                edge_id=8,
+                matrix_nodes=(1, None),
+                phase_positive_index=1,
+                phase_negative_index=None,
+                phase_sign=1,
+            ),
+        ],
+    )
+
+    assert np.allclose(
+        forward.branch_phase_zpfs[0],
+        -reverse_first.branch_phase_zpfs[0],
+    )
+    assert np.allclose(
+        forward.branch_phase_zpfs[1],
+        reverse_first.branch_phase_zpfs[1],
+    )
+
+
+def test_junctions_conflict_with_custom_nonlinear_branches():
+    capacitance_matrix = np.eye(1)
+    inverse_inductance_matrix = np.eye(1)
+
+    with pytest.raises(
+        ValueError,
+        match="either junctions or nonlinear_branches",
+    ):
+        BBQ(
+            capacitance_matrix,
+            inverse_inductance_matrix,
+            nonlinear_branches=(0,),
+            junctions=[_josephson_branch_record()],
+        )
 
 
 def test_plot_modes_uses_normalized_mode_indices(monkeypatch):
@@ -367,6 +594,94 @@ def test_invalid_inputs_raise_clear_value_errors(
             capacitance_matrix,
             inverse_inductance_matrix,
             nonlinear_branches=nonlinear_branches,
+        )
+
+
+@pytest.mark.parametrize(
+    "record_update,error_match",
+    [
+        ({"phase_positive_index": 2}, "phase_positive_index.*outside"),
+        (
+            {"phase_positive_index": None, "phase_negative_index": None},
+            "one grounded side",
+        ),
+        ({"matrix_nodes": (0, 2)}, "matrix_nodes.*outside"),
+        ({"matrix_nodes": (0, 0)}, "grounded side"),
+    ],
+)
+def test_invalid_junction_records_raise_clear_value_errors(
+    record_update,
+    error_match,
+):
+    capacitance_matrix = np.eye(1)
+    inverse_inductance_matrix = np.eye(1)
+    branch_record = _josephson_branch_record()
+    branch_record.update(record_update)
+
+    with pytest.raises(ValueError, match=error_match):
+        BBQ(
+            capacitance_matrix,
+            inverse_inductance_matrix,
+            junctions=[branch_record],
+        )
+
+
+def test_junction_records_compute_josephson_energy_from_inductance():
+    capacitance_matrix = np.eye(1)
+    inverse_inductance_matrix = np.eye(1)
+    branch_record = _josephson_branch_record()
+    del branch_record["E_j_GHz"]
+
+    bbq = BBQ(
+        capacitance_matrix,
+        inverse_inductance_matrix,
+        junctions=[branch_record],
+    )
+    josephson_inductance = float(branch_record["L_j"])
+    expected = (hbar / (2.0 * e)) ** 2 / (
+        josephson_inductance * 2.0 * np.pi * hbar * 1e9
+    )
+
+    assert np.allclose(bbq.josephson_energies_ghz, [expected])
+
+
+def test_junction_records_can_omit_josephson_energies():
+    capacitance_matrix = np.eye(1)
+    inverse_inductance_matrix = np.eye(1)
+    branch_record = _josephson_branch_record()
+    del branch_record["E_j_GHz"]
+    del branch_record["L_j"]
+
+    bbq = BBQ(
+        capacitance_matrix,
+        inverse_inductance_matrix,
+        junctions=[branch_record],
+    )
+
+    assert bbq.josephson_energies_ghz is None
+
+
+def test_junction_records_reject_mixed_josephson_energy_availability():
+    capacitance_matrix = np.eye(2)
+    inverse_inductance_matrix = np.eye(2)
+    with_energy = _josephson_branch_record(
+        matrix_nodes=(0, None),
+        phase_positive_index=0,
+        phase_negative_index=None,
+    )
+    without_energy = _josephson_branch_record(
+        matrix_nodes=(1, None),
+        phase_positive_index=1,
+        phase_negative_index=None,
+    )
+    del without_energy["E_j_GHz"]
+    del without_energy["L_j"]
+
+    with pytest.raises(ValueError, match="every Josephson junction record"):
+        BBQ(
+            capacitance_matrix,
+            inverse_inductance_matrix,
+            junctions=[with_energy, without_energy],
         )
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from functools import reduce
 
 import matplotlib.pyplot as plt
@@ -56,6 +56,11 @@ class BBQ:
         two-node form ``(node_a, node_b)`` uses branch phase ``Phi_b - Phi_a``.
         A single node ``(node,)`` means phase from ground to that node. A list
         such as ``[(0, 1), (2, 3)]`` defines multiple nonlinear branches.
+    junctions
+        Optional cQEDraw-style Josephson junction records. Each record must
+        include ``phase_positive_index`` and ``phase_negative_index``; ``None``
+        means ground. When ``junctions`` is provided, do not also pass
+        ``nonlinear_branches``.
 
     Attributes
     ----------
@@ -67,6 +72,9 @@ class BBQ:
         C-normalized normal-mode vectors as columns.
     branch_phase_zpfs
         Branch-by-mode matrix of dimensionless phase zero-point fluctuations.
+    josephson_energies_ghz
+        Josephson energies in GHz when all junction records include
+        ``E_j_GHz`` or ``L_j``; otherwise ``None``.
 
     Examples
     --------
@@ -83,7 +91,9 @@ class BBQ:
         self,
         capacitance_matrix: np.ndarray,
         inverse_inductance_matrix: np.ndarray,
-        nonlinear_branches: tuple | Iterable[tuple] = (-1, 0),
+        nonlinear_branches: tuple | Iterable[tuple] | None = None,
+        *,
+        junctions: Iterable[Mapping[str, object]] | None = None,
     ) -> None:
         self.capacitance_matrix = self._as_valid_matrix(
             capacitance_matrix,
@@ -104,10 +114,25 @@ class BBQ:
             )
 
         self.node_count = self.capacitance_matrix.shape[0]
-        self.nonlinear_branches = self._validate_nonlinear_branches(
-            nonlinear_branches
-        )
-        self.branch_incidence_matrix = self._branch_incidence_matrix()
+        if junctions is not None and nonlinear_branches is not None:
+            raise ValueError(
+                "Pass either junctions or nonlinear_branches, not both."
+            )
+
+        josephson_energies_ghz: FloatArray | None = None
+        if junctions is not None:
+            (
+                self.nonlinear_branches,
+                self.branch_incidence_matrix,
+                josephson_energies_ghz,
+            ) = self._junction_data_from_records(junctions, self.node_count)
+        else:
+            if nonlinear_branches is None:
+                nonlinear_branches = (-1, 0)
+            self.nonlinear_branches = self._validate_nonlinear_branches(
+                nonlinear_branches
+            )
+            self.branch_incidence_matrix = self._branch_incidence_matrix()
 
         (
             self._capacitance_basis,
@@ -123,6 +148,7 @@ class BBQ:
         self.angular_frequencies = self._angular_frequencies()
         self.branch_phase_zpfs = self._branch_phase_zpfs()
         self.frequencies_ghz = self._frequencies_ghz()
+        self.josephson_energies_ghz = josephson_energies_ghz
 
     @staticmethod
     def _as_valid_matrix(matrix: np.ndarray, name: str) -> FloatArray:
@@ -137,6 +163,315 @@ class BBQ:
             raise ValueError(f"{name} must be symmetric.")
 
         return array
+
+    @classmethod
+    def _junction_data_from_records(
+        cls,
+        junctions: Iterable[Mapping[str, object]],
+        node_count: int,
+    ) -> tuple[
+        tuple[tuple[int, ...], ...],
+        FloatArray,
+        FloatArray | None,
+    ]:
+        """Validate junction records and build branch tuples plus incidence."""
+        if isinstance(junctions, (str, bytes)) or not isinstance(
+            junctions, Iterable
+        ):
+            raise ValueError(
+                "junctions must be an iterable of Josephson junction records."
+            )
+
+        records = tuple(junctions)
+        if len(records) == 0:
+            raise ValueError(
+                "junctions must contain at least one Josephson junction "
+                "record."
+            )
+
+        nonlinear_branches = []
+        josephson_energies: list[float] = []
+        has_any_josephson_energy = False
+        has_missing_josephson_energy = False
+        B = np.zeros((len(records), node_count), dtype=float)
+
+        for branch_index, record in enumerate(records):
+            if not isinstance(record, Mapping):
+                raise ValueError(
+                    "Each Josephson junction record must be a mapping."
+                )
+
+            phase_positive_index = cls._record_optional_node_index(
+                record,
+                "phase_positive_index",
+                branch_index,
+                node_count,
+            )
+            phase_negative_index = cls._record_optional_node_index(
+                record,
+                "phase_negative_index",
+                branch_index,
+                node_count,
+            )
+            matrix_nodes = cls._record_matrix_nodes(
+                record,
+                branch_index,
+                node_count,
+            )
+            cls._validate_record_phase_nodes(
+                matrix_nodes,
+                phase_positive_index,
+                phase_negative_index,
+                branch_index,
+            )
+
+            if phase_negative_index is not None:
+                B[branch_index, phase_negative_index] -= 1.0
+            if phase_positive_index is not None:
+                B[branch_index, phase_positive_index] += 1.0
+
+            nonlinear_branches.append(
+                cls._record_branch_tuple(
+                    phase_positive_index,
+                    phase_negative_index,
+                )
+            )
+
+            josephson_energy = cls._record_josephson_energy_ghz(
+                record,
+                branch_index,
+            )
+            if josephson_energy is not None:
+                has_any_josephson_energy = True
+                josephson_energies.append(josephson_energy)
+            else:
+                has_missing_josephson_energy = True
+
+        if has_any_josephson_energy and has_missing_josephson_energy:
+            raise ValueError(
+                "Either every Josephson junction record must include E_j_GHz "
+                "or L_j, or none of them should."
+            )
+        josephson_energy_array = (
+            np.asarray(josephson_energies, dtype=float)
+            if has_any_josephson_energy
+            else None
+        )
+        return (
+            tuple(nonlinear_branches),
+            B,
+            josephson_energy_array,
+        )
+
+    @classmethod
+    def _record_matrix_nodes(
+        cls,
+        record: Mapping[str, object],
+        branch_index: int,
+        node_count: int,
+    ) -> tuple[int | None, int | None] | None:
+        if "matrix_nodes" not in record:
+            return None
+
+        value = record["matrix_nodes"]
+        if (
+            not isinstance(value, Sequence)
+            or isinstance(value, (str, bytes))
+            or len(value) != 2
+        ):
+            raise ValueError(
+                f"Josephson junction record {branch_index} matrix_nodes must "
+                "contain two entries."
+            )
+
+        return (
+            cls._optional_node_index_value(
+                value[0],
+                "matrix_nodes",
+                branch_index,
+                node_count,
+            ),
+            cls._optional_node_index_value(
+                value[1],
+                "matrix_nodes",
+                branch_index,
+                node_count,
+            ),
+        )
+
+    @classmethod
+    def _record_optional_node_index(
+        cls,
+        record: Mapping[str, object],
+        key: str,
+        branch_index: int,
+        node_count: int,
+    ) -> int | None:
+        value = cls._required_record_key(record, key, branch_index)
+        return cls._optional_node_index_value(
+            value,
+            key,
+            branch_index,
+            node_count,
+        )
+
+    @staticmethod
+    def _required_record_key(
+        record: Mapping[str, object],
+        key: str,
+        branch_index: int,
+    ) -> object:
+        if key not in record:
+            raise ValueError(
+                f"Josephson junction record {branch_index} is missing required "
+                f"value {key!r}."
+            )
+
+        return record[key]
+
+    @staticmethod
+    def _optional_node_index_value(
+        value: object,
+        key: str,
+        branch_index: int,
+        node_count: int,
+    ) -> int | None:
+        if value is None:
+            return None
+        if not isinstance(value, (int, np.integer)):
+            raise ValueError(
+                f"Josephson junction record {branch_index} {key} must contain "
+                "integer matrix indices or None."
+            )
+
+        node_index = int(value)
+        if node_index < 0 or node_index >= node_count:
+            raise ValueError(
+                f"Josephson junction record {branch_index} {key} contains an "
+                "index outside the circuit."
+            )
+
+        return node_index
+
+    @staticmethod
+    def _validate_record_phase_nodes(
+        matrix_nodes: tuple[int | None, int | None] | None,
+        phase_positive_index: int | None,
+        phase_negative_index: int | None,
+        branch_index: int,
+    ) -> None:
+        if phase_positive_index is None and phase_negative_index is None:
+            raise ValueError(
+                f"Josephson junction record {branch_index} must define a "
+                "positive or negative phase node, with at most one grounded "
+                "side."
+            )
+        if (
+            phase_positive_index is not None
+            and phase_positive_index == phase_negative_index
+        ):
+            raise ValueError(
+                f"Josephson junction record {branch_index} phase nodes must be "
+                "different."
+            )
+
+        if matrix_nodes is None:
+            return
+
+        matrix_node_set = {node for node in matrix_nodes if node is not None}
+        phase_node_set = {
+            node
+            for node in (phase_positive_index, phase_negative_index)
+            if node is not None
+        }
+        phase_uses_ground = (
+            phase_positive_index is None or phase_negative_index is None
+        )
+        matrix_uses_ground = any(node is None for node in matrix_nodes)
+        if phase_uses_ground != matrix_uses_ground:
+            raise ValueError(
+                f"Josephson junction record {branch_index} must use None for "
+                "the grounded side in both matrix_nodes and phase indices."
+            )
+
+        if not phase_node_set.issubset(matrix_node_set):
+            raise ValueError(
+                f"Josephson junction record {branch_index} phase indices must "
+                "refer to its matrix_nodes."
+            )
+
+    @staticmethod
+    def _record_positive_float(
+        record: Mapping[str, object],
+        key: str,
+        branch_index: int,
+    ) -> float:
+        value = BBQ._required_record_key(record, key, branch_index)
+        if not isinstance(value, (int, float, np.integer, np.floating)):
+            raise ValueError(
+                f"Josephson junction record {branch_index} {key} must be a "
+                "finite positive number."
+            )
+
+        float_value = float(value)
+        if not np.isfinite(float_value) or float_value <= 0.0:
+            raise ValueError(
+                f"Josephson junction record {branch_index} {key} must be a "
+                "finite positive number."
+            )
+
+        return float_value
+
+    @classmethod
+    def _record_josephson_energy_ghz(
+        cls,
+        record: Mapping[str, object],
+        branch_index: int,
+    ) -> float | None:
+        if "E_j_GHz" in record and record["E_j_GHz"] is not None:
+            return cls._record_positive_float(
+                record,
+                "E_j_GHz",
+                branch_index,
+            )
+        if "L_j" in record and record["L_j"] is not None:
+            josephson_inductance = cls._record_positive_float(
+                record,
+                "L_j",
+                branch_index,
+            )
+            return cls._josephson_energy_ghz_from_inductance(
+                josephson_inductance
+            )
+
+        return None
+
+    @staticmethod
+    def _josephson_energy_ghz_from_inductance(
+        josephson_inductance: float,
+    ) -> float:
+        reduced_flux_quantum = hbar / (2.0 * e)
+        planck_constant = 2.0 * np.pi * hbar
+        return float(
+            reduced_flux_quantum**2
+            / (josephson_inductance * planck_constant * 1e9)
+        )
+
+    @staticmethod
+    def _record_branch_tuple(
+        phase_positive_index: int | None,
+        phase_negative_index: int | None,
+    ) -> tuple[int, ...]:
+        if phase_positive_index is None:
+            if phase_negative_index is None:
+                raise ValueError(
+                    "A Josephson junction record must contain a phase node."
+                )
+            return (phase_negative_index,)
+        if phase_negative_index is None:
+            return (phase_positive_index,)
+
+        return (phase_negative_index, phase_positive_index)
 
     def _validate_nonlinear_branches(
         self,
