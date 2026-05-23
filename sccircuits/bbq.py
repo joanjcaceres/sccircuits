@@ -509,9 +509,9 @@ class BBQ:
         if not hasattr(self, "_dimensions"):
             raise ValueError("Set dimensions before building a Hamiltonian.")
 
-    def hamiltonian_0(self) -> FloatArray:
+    def hamiltonian_linear(self) -> FloatArray:
         """
-        Calculate the harmonic Hamiltonian in GHz.
+        Calculate the linear harmonic Hamiltonian in GHz.
 
         The diagonal contains ``f_k * (n_k + 1/2)`` for each selected mode,
         with ``f_k = omega_k / (2*pi)`` in GHz. The zero-point offset is
@@ -521,10 +521,10 @@ class BBQ:
         Returns
         -------
         ndarray
-            Dense harmonic Hamiltonian on the selected tensor-product basis.
+            Dense linear Hamiltonian on the selected tensor-product basis.
         """
         self._require_hamiltonian_basis()
-        hamiltonian_0 = np.zeros(
+        H_linear = np.zeros(
             (self._total_dimension, self._total_dimension)
         )
 
@@ -532,16 +532,16 @@ class BBQ:
             mode_index = self.selected_modes[idx]
             energy_GHz = self.linear_modes_GHz[mode_index]
             diagonal = energy_GHz * (np.arange(dimension) + 0.5)
-            hamiltonian_0_subspace = diags([diagonal], [0]).toarray()
+            H_linear_subspace = diags([diagonal], [0]).toarray()
 
             factors = [
-                hamiltonian_0_subspace if i == idx else np.eye(dim)
+                H_linear_subspace if i == idx else np.eye(dim)
                 for i, dim in enumerate(self.dimensions)
             ]
 
-            hamiltonian_0 += self._kron_all(factors)
+            H_linear += self._kron_all(factors)
 
-        return hamiltonian_0
+        return H_linear
 
     def _Ej_suppression_factors(self) -> FloatArray:
         """
@@ -788,14 +788,14 @@ if __name__ == "__main__":
     circuit.selected_modes = [0]
     circuit.dimensions = 100
 
-    hamiltonian_0 = circuit.hamiltonian_0()
+    H_linear = circuit.hamiltonian_linear()
 
     phi_ext_array = np.linspace(0, np.pi, 100)
     evals_array = []
 
     for phi_ext in phi_ext_array:
         hamiltonian_nl = circuit.hamiltonian_nl(Ej=Ejb / 1e9, phi_ext=phi_ext)
-        hamiltonian = hamiltonian_0 + hamiltonian_nl
+        hamiltonian = H_linear + hamiltonian_nl
         evals = eigh(hamiltonian, eigvals_only=True)
         evals_array.append(evals)
 

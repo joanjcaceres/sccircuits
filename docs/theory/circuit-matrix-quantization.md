@@ -108,8 +108,8 @@ $$
 \left(\hat{a}_k^\dagger\hat{a}_k+\frac{1}{2}\right).
 $$
 
-`BBQ.hamiltonian_0()` reports this harmonic energy in GHz and includes the
-zero-point offset. For transition frequencies, subtracting the ground-state
+`BBQ.hamiltonian_linear()` reports this harmonic energy in GHz and includes
+the zero-point offset. For transition frequencies, subtracting the ground-state
 energy removes the common offset.
 
 ## Branch Phase ZPF
@@ -170,5 +170,5 @@ shape as `phase_zpf_matrix`.
 - `linear_modes` stores angular frequencies $\omega_k$ in rad/s.
 - `linear_modes_GHz` stores $\omega_k/(2\pi)$ in GHz.
 - `phase_zpf_matrix` and `phase_zpf_list` are dimensionless.
-- `hamiltonian_0()` and `hamiltonian_nl()` return dense Hamiltonian matrices in
-  GHz.
+- `hamiltonian_linear()` and `hamiltonian_nl()` return dense Hamiltonian
+  matrices in GHz.

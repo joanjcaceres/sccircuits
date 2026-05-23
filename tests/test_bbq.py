@@ -133,7 +133,7 @@ def test_plot_linear_modes_uses_normalized_mode_indices(monkeypatch):
     assert legend_labels[0].startswith("$f_2")
 
 
-def test_hamiltonian_0_matches_harmonic_diagonal():
+def test_hamiltonian_linear_matches_harmonic_diagonal():
     C_matrix = np.array([[2.0e-15]])
     L_inv_matrix = np.array([[1.0 / 7.0e-9]])
     bbq = BBQ(C_matrix, L_inv_matrix, non_linear_nodes=(0,))
@@ -142,7 +142,7 @@ def test_hamiltonian_0_matches_harmonic_diagonal():
 
     expected = np.diag(bbq.linear_modes_GHz[0] * (np.arange(4) + 0.5))
 
-    assert np.allclose(bbq.hamiltonian_0(), expected)
+    assert np.allclose(bbq.hamiltonian_linear(), expected)
 
 
 def test_hamiltonian_nl_sums_multiple_nonlinear_branches():

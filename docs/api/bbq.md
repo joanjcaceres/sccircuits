@@ -57,9 +57,9 @@ dimension for each one:
 bbq.selected_modes = [0]
 bbq.dimensions = 40
 
-H0 = bbq.hamiltonian_0()
+H_linear = bbq.hamiltonian_linear()
 Hnl = bbq.hamiltonian_nl(Ej=7.5, phi_ext=0.0)
-H = H0 + Hnl
+H = H_linear + Hnl
 ```
 
 With multiple nonlinear branches, pass one `Ej` and one `phi_ext` per branch:
@@ -68,7 +68,7 @@ With multiple nonlinear branches, pass one `Ej` and one `phi_ext` per branch:
 Hnl = bbq.hamiltonian_nl(Ej=[7.5, 3.2], phi_ext=[0.0, 0.1])
 ```
 
-Hamiltonian energies are in GHz. `hamiltonian_0()` includes the harmonic
+Hamiltonian energies are in GHz. `hamiltonian_linear()` includes the harmonic
 zero-point contribution $f_k(n_k + 1/2)$. When analyzing transition
 frequencies, subtract the ground-state energy from each spectrum.
 
