@@ -204,10 +204,10 @@ print("Branch-by-mode phase ZPF:", bbq.branch_phase_zpfs)
 ```
 
 For `nonlinear_branches=(node_a, node_b)`, `BBQ` uses branch phase
-`Phi_b - Phi_a`. Reversing the tuple flips the sign of `branch_phase_zpfs` while
-leaving the mode frequencies unchanged. For multiple nonlinear branches, pass
-a list of branch tuples such as `nonlinear_branches=[(0, 1), (1, 2)]`; in that
-case `branch_phase_zpfs` has one row per branch.
+`Phi_b - Phi_a`. Reversing the tuple flips the sign of `branch_phase_zpfs`.
+For multiple nonlinear branches, pass a list of branch tuples such as
+`nonlinear_branches=[(0, 1), (1, 2)]`; in that case `branch_phase_zpfs` has one
+row per branch.
 
 You can also generate `capacitance_matrix` and `inverse_inductance_matrix` with the companion
 [`bbq-circuit-designer`](https://github.com/joanjcaceres/bbq-circuit-designer)

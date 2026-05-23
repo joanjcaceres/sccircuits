@@ -146,7 +146,7 @@ $$
 $$
 
 Reversing the branch direction flips the sign of every
-$\varphi_{\mathrm{zpf}}$ value and leaves the frequencies unchanged.
+$\varphi_{\mathrm{zpf}}$ value.
 
 For multiple nonlinear branches, collect the branch directions into a matrix
 $\mathbf{B}$. Each row is one branch. For branch `(node_a, node_b)`,
