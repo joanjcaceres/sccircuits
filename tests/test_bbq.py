@@ -56,41 +56,6 @@ def test_generalized_solver_matches_scipy_reference():
     )
 
 
-def test_legacy_mass_weighted_quantities_are_lazy_and_consistent():
-    C_matrix = np.array([[2.0, 0.2], [0.2, 1.5]])
-    L_inv_matrix = np.array([[4.0, -1.0], [-1.0, 3.0]])
-
-    bbq = BBQ(C_matrix, L_inv_matrix, non_linear_nodes=(0, 1))
-
-    assert "C_inv_sqrt" not in bbq.__dict__
-    assert "dynamical_matrix" not in bbq.__dict__
-    assert "_C_inv_sqrt" not in bbq.__dict__
-    assert "_dynamical_matrix_cache" not in bbq.__dict__
-
-    C_inv_sqrt = bbq.C_inv_sqrt
-    assert "_C_inv_sqrt" in bbq.__dict__
-    assert np.allclose(
-        C_inv_sqrt @ C_matrix @ C_inv_sqrt,
-        np.eye(2),
-        rtol=1e-12,
-        atol=1e-12,
-    )
-
-    dynamical_matrix = bbq.dynamical_matrix
-    assert "_dynamical_matrix_cache" in bbq.__dict__
-    assert np.allclose(
-        dynamical_matrix,
-        C_inv_sqrt @ L_inv_matrix @ C_inv_sqrt,
-    )
-
-    eigenvalues, eigenvectors = bbq.eigensys_dynamical_matrix
-    assert np.allclose(eigenvalues, bbq.mode_eigenvalues)
-    assert np.allclose(
-        dynamical_matrix @ eigenvectors,
-        eigenvectors @ np.diag(eigenvalues),
-    )
-
-
 def test_tiny_capacitance_direction_is_excluded():
     C_matrix = np.diag([2.0e-15, 1.0e-30])
     L_inv_matrix = np.diag([1.0 / 7.0e-9, 1.0 / 5.0e-9])

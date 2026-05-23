@@ -255,60 +255,6 @@ class BBQ:
 
         return physical_basis, physical_eigvals
 
-    @property
-    def C_inv_sqrt(self) -> FloatArray:
-        """
-        Compatibility inverse square root of the capacitance matrix.
-
-        This quantity is not needed by the primary generalized-eigenproblem
-        calculation. It is built lazily for existing code that inspects the
-        legacy mass-weighted representation.
-        """
-        if not hasattr(self, "_C_inv_sqrt"):
-            inverse_sqrt_capacitance = np.diag(
-                1.0 / np.sqrt(self._capacitance_eigenvalues)
-            )
-            self._C_inv_sqrt = (
-                self._capacitance_basis
-                @ inverse_sqrt_capacitance
-                @ self._capacitance_basis.T
-            )
-
-        return self._C_inv_sqrt
-
-    @property
-    def dynamical_matrix(self) -> FloatArray:
-        """
-        Legacy mass-weighted matrix kept for compatibility and diagnostics.
-
-        The scientifically primary calculation solves
-        ``L_inv v = omega**2 C v`` directly. This matrix is computed only when
-        requested by older analysis code.
-        """
-        if not hasattr(self, "_dynamical_matrix_cache"):
-            self._dynamical_matrix_cache = (
-                self.C_inv_sqrt @ self.L_inv_matrix @ self.C_inv_sqrt
-            )
-
-        return self._dynamical_matrix_cache
-
-    @property
-    def eigensys_dynamical_matrix(self) -> tuple[FloatArray, FloatArray]:
-        """
-        Legacy eigenvalues and vectors of :attr:`dynamical_matrix`.
-
-        The eigenvalues match ``mode_eigenvalues``. The vectors are the
-        mass-weighted representation corresponding to ``mode_vectors``.
-        """
-        return self.mode_eigenvalues, self._mass_weighted_mode_vectors()
-
-    def _mass_weighted_mode_vectors(self) -> FloatArray:
-        """Return mode vectors in the legacy mass-weighted representation."""
-        sqrt_capacitance = np.diag(np.sqrt(self._capacitance_eigenvalues))
-        return self._capacitance_basis @ (
-            sqrt_capacitance @ self._reduced_mode_vectors
-        )
-
     def _solve_generalized_modes(
         self,
     ) -> tuple[FloatArray, FloatArray, FloatArray]:

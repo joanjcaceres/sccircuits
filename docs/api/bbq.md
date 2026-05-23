@@ -89,23 +89,14 @@ no larger than `1e-12 * max(abs(eigenvalues(C_matrix)))`.
 
 ## Compatibility Notes
 
-The refactored implementation keeps the older public attributes where practical:
+The refactored implementation exposes the physical quantities used in the
+generalized-eigenproblem workflow:
 
-- `C_inv_sqrt`: the inverse square root used by older code to form a
-  transformed matrix.
-- `dynamical_matrix`: the older transformed matrix
-  `C_inv_sqrt @ L_inv_matrix @ C_inv_sqrt`.
-- `eigensys_dynamical_matrix`: eigenvalues and vectors of that transformed
-  matrix.
 - `linear_modes`
 - `linear_modes_GHz`
 - `phase_zpf_list`
 - `phase_zpf_matrix`
 
-The first three compatibility attributes are computed only when accessed. The
-frequencies, C-normalized mode vectors, phase ZPF values, and Hamiltonians are
-computed from the generalized eigenproblem.
-
-The correctly spelled `Ej_suppression_factor` should be preferred in new code.
 The older misspelled `Ej_supression_factor` remains as an alias for existing
-notebooks and scripts.
+notebooks and scripts. The correctly spelled `Ej_suppression_factor` should be
+preferred in new code.
