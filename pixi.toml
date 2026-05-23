@@ -21,6 +21,9 @@ flake8 = ">=7,<8"
 mypy = ">=1.16,<2"
 jupyter = ">=1,<2"
 notebook = ">=7,<8"
+mkdocs = ">=1.6,<2"
+mkdocs-material = ">=9.5,<10"
+pymdown-extensions = ">=10.8,<11"
 
 [target.osx-arm64.dependencies]
 libblas = { version = ">=3.9.0,<4", build = "*accelerate" }
@@ -37,6 +40,8 @@ format = "black sccircuits/ tests/"
 lint = "flake8 sccircuits/ tests/"
 typecheck = "mypy sccircuits/"
 example = "python example_usage.py"
+docs-build = "mkdocs build --strict"
+docs-serve = "mkdocs serve"
 deps-check = "python -m pip --cache-dir .pixi/pip-cache check"
 deps-freeze = "python -m pip --cache-dir .pixi/pip-cache freeze"
 

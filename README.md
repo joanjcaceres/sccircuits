@@ -12,6 +12,22 @@ A comprehensive Python package for analyzing superconducting quantum circuits, i
 - **Interactive Tools**: Point picking tools for data analysis and visualization
 - **Numerical Utilities**: Specialized algorithms for quantum circuit Hamiltonians
 
+## Documentation
+
+The documentation website is built with MkDocs Material and includes the
+scientific derivation behind `BBQ`:
+
+- `docs/theory/circuit-matrix-quantization.md` explains the generalized
+  eigenproblem, mode normalization, units, and phase zero-point fluctuations.
+- `docs/api/bbq.md` shows the practical workflow from matrices to frequencies,
+  phase ZPF values, and Hamiltonians.
+
+Build the site locally with:
+
+```bash
+pixi run -e sccircuits docs-build
+```
+
 ## Companion GUI Application
 
 The BBQ circuit drawing GUI is now maintained as the separate public
@@ -167,20 +183,33 @@ from sccircuits import BBQ
 import numpy as np
 
 # Define circuit matrices (example for a transmon)
-C_matrix = np.array([[40e-15, -32.9e-15], 
-                     [-32.9e-15, 32.9e-15]])  # Capacitance matrix
-L_inv_matrix = np.array([[0, 0], 
-                         [0, 1/1.23e-9]])      # Inverse inductance matrix
+capacitance_matrix = np.array(
+    [[40e-15, -32.9e-15], [-32.9e-15, 32.9e-15]]
+)
+inverse_inductance_matrix = np.array(
+    [[0.0, 0.0], [0.0, 1 / 1.23e-9]]
+)
 
 # Create BBQ object
-bbq = BBQ(C_matrix, L_inv_matrix, non_linear_nodes=(-1, 0))
+bbq = BBQ(
+    capacitance_matrix,
+    inverse_inductance_matrix,
+    nonlinear_branches=(0, 1),
+)
 
 # Analyze linear modes
-print("Linear mode frequencies (GHz):", bbq.linear_modes_GHz)
-print("Phase ZPF:", bbq.phase_zpf_list)
+print("Angular frequencies (rad/s):", bbq.angular_frequencies)
+print("Mode frequencies (GHz):", bbq.frequencies_ghz)
+print("Branch-by-mode phase ZPF:", bbq.branch_phase_zpfs)
 ```
 
-You can also generate `C_matrix` and `L_inv_matrix` with the companion
+For `nonlinear_branches=(node_a, node_b)`, `BBQ` uses branch phase
+`Phi_b - Phi_a`. Reversing the tuple flips the sign of `branch_phase_zpfs`.
+For multiple nonlinear branches, pass a list of branch tuples such as
+`nonlinear_branches=[(0, 1), (1, 2)]`; in that case `branch_phase_zpfs` has one
+row per branch.
+
+You can also generate `capacitance_matrix` and `inverse_inductance_matrix` with the companion
 [`bbq-circuit-designer`](https://github.com/joanjcaceres/bbq-circuit-designer)
 GUI and pass the copied snippet output into `BBQ`.
 
@@ -237,9 +266,11 @@ Advanced parameter fitting class featuring:
 
 ### BBQ (Black Box Quantization)
 Implements circuit quantization from classical circuit parameters:
-- Capacitance and inductance matrix analysis
+- Generalized eigenproblem analysis of capacitance and inverse inductance
+  matrices
 - Linear mode calculation and visualization
-- Phase zero-point fluctuation determination
+- Branch phase zero-point fluctuation determination with documented sign and
+  unit conventions
 - Support for arbitrary circuit topologies
 
 ### TransitionFitter
