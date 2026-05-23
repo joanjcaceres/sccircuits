@@ -23,5 +23,11 @@ jobs:
       - name: Run tests
         run: pixi run -e sccircuits test
 
+      - name: Lint
+        run: pixi run -e sccircuits lint
+
+      - name: Typecheck
+        run: pixi run -e sccircuits typecheck
+
       - name: Build docs
         run: pixi run -e sccircuits docs-build
