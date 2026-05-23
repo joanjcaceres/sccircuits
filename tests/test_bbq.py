@@ -93,6 +93,20 @@ def test_generalized_solver_matches_scipy_reference():
     )
 
 
+def test_linear_circuit_can_omit_nonlinear_branches_and_junctions():
+    capacitance_matrix = np.eye(2)
+    inverse_inductance_matrix = np.diag([2.0, 3.0])
+
+    bbq = BBQ(capacitance_matrix, inverse_inductance_matrix)
+
+    assert bbq.nonlinear_branches == ()
+    assert bbq.branch_phase_nodes == ()
+    assert bbq.branch_incidence_matrix.shape == (0, 2)
+    assert bbq.branch_phase_zpfs.shape == (0, 2)
+    assert bbq.josephson_energies_ghz is None
+    assert np.allclose(bbq.angular_frequencies_squared, [2.0, 3.0])
+
+
 def test_tiny_capacitance_direction_is_excluded():
     capacitance_matrix = np.diag([2.0e-15, 1.0e-30])
     inverse_inductance_matrix = np.diag([1.0 / 7.0e-9, 1.0 / 5.0e-9])

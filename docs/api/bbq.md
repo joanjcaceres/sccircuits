@@ -24,14 +24,23 @@ inverse_inductance_matrix = np.array(
     ]
 )
 
+bbq = BBQ(capacitance_matrix, inverse_inductance_matrix)
+
+print(bbq.angular_frequencies)   # angular frequencies in rad/s
+print(bbq.frequencies_ghz)       # ordinary frequencies in GHz
+print(bbq.branch_phase_zpfs)     # empty when no nonlinear branches exist
+```
+
+If the circuit has a nonlinear branch and you want its phase zero-point
+fluctuations, pass the branch direction explicitly:
+
+```python
 bbq = BBQ(
     capacitance_matrix,
     inverse_inductance_matrix,
     nonlinear_branches=(0, 1),
 )
 
-print(bbq.angular_frequencies)   # angular frequencies in rad/s
-print(bbq.frequencies_ghz)       # ordinary frequencies in GHz
 print(bbq.branch_phase_nodes)    # (positive_node, negative_node), None means ground
 print(bbq.branch_phase_zpfs)     # branch-by-mode phase ZPF matrix
 ```
@@ -131,8 +140,8 @@ frequencies, subtract the ground-state energy from each spectrum.
 - `capacitance_matrix` and `inverse_inductance_matrix` are finite square matrices.
 - Both matrices are symmetric and have the same shape.
 - `capacitance_matrix` is positive on the retained physical capacitance subspace.
-- `nonlinear_branches` is either one valid branch tuple or a non-empty iterable
-  of valid branch tuples.
+- `nonlinear_branches`, when provided, is either one valid branch tuple or an
+  iterable of valid branch tuples.
 - Only positive finite normal modes are retained.
 
 Null or numerically tiny capacitance directions are projected out before the
