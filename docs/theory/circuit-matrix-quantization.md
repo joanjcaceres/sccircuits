@@ -45,11 +45,7 @@ $$
 \omega_k^2 \mathbf{C}\mathbf{v}_k.
 $$
 
-This generalized eigenvalue problem is the main calculation in `BBQ`. Older
-versions also exposed a matrix formed by sandwiching `L_inv` between inverse
-square roots of `C`. That matrix has the same positive eigenvalues
-$\omega_k^2$ on the physical capacitance subspace, but the generalized
-eigenproblem above is the clearer object to interpret physically.
+This generalized eigenvalue problem is the main calculation in `BBQ`.
 
 ## Normalization
 
