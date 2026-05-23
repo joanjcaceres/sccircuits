@@ -183,28 +183,33 @@ from sccircuits import BBQ
 import numpy as np
 
 # Define circuit matrices (example for a transmon)
-C_matrix = np.array([[40e-15, -32.9e-15], 
-                     [-32.9e-15, 32.9e-15]])  # Capacitance matrix
-L_inv_matrix = np.array([[0, 0], 
-                         [0, 1/1.23e-9]])      # Inverse inductance matrix
+capacitance_matrix = np.array(
+    [[40e-15, -32.9e-15], [-32.9e-15, 32.9e-15]]
+)
+inverse_inductance_matrix = np.array(
+    [[0.0, 0.0], [0.0, 1 / 1.23e-9]]
+)
 
 # Create BBQ object
-bbq = BBQ(C_matrix, L_inv_matrix, non_linear_nodes=(0, 1))
+bbq = BBQ(
+    capacitance_matrix,
+    inverse_inductance_matrix,
+    nonlinear_branches=(0, 1),
+)
 
 # Analyze linear modes
-print("Angular frequencies (rad/s):", bbq.linear_modes)
-print("Mode frequencies (GHz):", bbq.linear_modes_GHz)
-print("Branch phase ZPF:", bbq.phase_zpf_list)
-print("Branch-by-mode phase ZPF:", bbq.phase_zpf_matrix)
+print("Angular frequencies (rad/s):", bbq.angular_frequencies)
+print("Mode frequencies (GHz):", bbq.frequencies_ghz)
+print("Branch-by-mode phase ZPF:", bbq.branch_phase_zpfs)
 ```
 
-For `non_linear_nodes=(node_a, node_b)`, `BBQ` uses branch phase
-`Phi_b - Phi_a`. Reversing the tuple flips the sign of `phase_zpf_list` while
+For `nonlinear_branches=(node_a, node_b)`, `BBQ` uses branch phase
+`Phi_b - Phi_a`. Reversing the tuple flips the sign of `branch_phase_zpfs` while
 leaving the mode frequencies unchanged. For multiple nonlinear branches, pass
-a list of branch tuples such as `non_linear_nodes=[(0, 1), (1, 2)]`; in that
-case `phase_zpf_matrix` has one row per branch.
+a list of branch tuples such as `nonlinear_branches=[(0, 1), (1, 2)]`; in that
+case `branch_phase_zpfs` has one row per branch.
 
-You can also generate `C_matrix` and `L_inv_matrix` with the companion
+You can also generate `capacitance_matrix` and `inverse_inductance_matrix` with the companion
 [`bbq-circuit-designer`](https://github.com/joanjcaceres/bbq-circuit-designer)
 GUI and pass the copied snippet output into `BBQ`.
 
