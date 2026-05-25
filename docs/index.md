@@ -9,6 +9,9 @@ and black-box quantization from circuit matrices.
 - [Circuit Matrix Quantization](theory/circuit-matrix-quantization.md) explains
   the generalized eigenproblem, mode normalization, and branch phase
   zero-point fluctuations used by `BBQ`.
+- [Graph-To-Matrix Quantization](theory/graph-to-matrix-quantization.md)
+  documents the planned upstream graph layer: incidence matrices, external flux
+  mapping, variable reductions, and the output contract into `BBQ`.
 - [BBQ](api/bbq.md) shows the practical workflow from capacitance and inverse
   inductance matrices to frequencies, phase ZPF values, and Hamiltonians.
 

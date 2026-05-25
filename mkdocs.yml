@@ -17,6 +17,7 @@ nav:
   - Home: index.md
   - Theory:
       - Circuit Matrix Quantization: theory/circuit-matrix-quantization.md
+      - Graph-To-Matrix Quantization: theory/graph-to-matrix-quantization.md
   - API and Tutorials:
       - BBQ: api/bbq.md
 
