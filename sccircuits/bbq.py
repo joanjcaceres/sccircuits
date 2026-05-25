@@ -38,7 +38,9 @@ class BBQ:
     With ``nonlinear_branches=(node_a, node_b)``, the nonlinear branch phase
     uses the direction ``Phi_b - Phi_a``. A list of such tuples represents
     multiple nonlinear branches. Reversing a branch tuple reverses the sign of
-    that branch's zero-point phase fluctuations.
+    that branch's zero-point phase fluctuations. If neither
+    ``nonlinear_branches`` nor ``junctions`` is provided, ``BBQ`` computes the
+    linear modes without any nonlinear branch phase rows.
 
     ``BBQ`` remains a numerical object when cQEDraw junction records are used:
     web-specific identifiers are not retained. Row order is the contract:
@@ -60,7 +62,8 @@ class BBQ:
         Node indices defining one or more nonlinear branches. The common
         two-node form ``(node_a, node_b)`` uses branch phase ``Phi_b - Phi_a``.
         A single node ``(node,)`` means phase from ground to that node. A list
-        such as ``[(0, 1), (2, 3)]`` defines multiple nonlinear branches.
+        such as ``[(0, 1), (2, 3)]`` defines multiple nonlinear branches. Omit
+        this argument for a linear circuit with no nonlinear branches.
     junctions
         Optional cQEDraw-style Josephson junction records. Each record must
         include ``phase_positive_index`` and ``phase_negative_index``; ``None``
@@ -81,6 +84,8 @@ class BBQ:
         ground.
     branch_phase_zpfs
         Branch-by-mode matrix of dimensionless phase zero-point fluctuations.
+        Its shape is ``(0, number_of_modes)`` when there are no nonlinear
+        branches.
     josephson_energies_ghz
         Josephson energies in GHz when all junction records include
         ``E_j_GHz`` or ``L_j``; otherwise ``None``.
@@ -91,9 +96,9 @@ class BBQ:
     >>> from sccircuits import BBQ
     >>> C = np.array([[40e-15, -32.9e-15], [-32.9e-15, 40e-15]])
     >>> L_inv = np.array([[1 / 1.23e-9, 0.0], [0.0, 1 / 1.23e-9]])
-    >>> bbq = BBQ(C, L_inv, nonlinear_branches=(0, 1))
-    >>> bbq.frequencies_ghz.shape[0] == bbq.branch_phase_zpfs.shape[1]
-    True
+    >>> bbq = BBQ(C, L_inv)
+    >>> bbq.branch_phase_zpfs.shape[0]
+    0
     """
 
     def __init__(
@@ -138,14 +143,20 @@ class BBQ:
             ) = self._junction_data_from_records(junctions, self.node_count)
         else:
             if nonlinear_branches is None:
-                nonlinear_branches = (-1, 0)
-            self.nonlinear_branches = self._validate_nonlinear_branches(
-                nonlinear_branches
-            )
-            self.branch_phase_nodes = (
-                self._branch_phase_nodes_from_nonlinear_branches()
-            )
-            self.branch_incidence_matrix = self._branch_incidence_matrix()
+                self.nonlinear_branches = ()
+                self.branch_phase_nodes = ()
+                self.branch_incidence_matrix = np.zeros(
+                    (0, self.node_count),
+                    dtype=float,
+                )
+            else:
+                self.nonlinear_branches = self._validate_nonlinear_branches(
+                    nonlinear_branches
+                )
+                self.branch_phase_nodes = (
+                    self._branch_phase_nodes_from_nonlinear_branches()
+                )
+                self.branch_incidence_matrix = self._branch_incidence_matrix()
 
         (
             self._capacitance_basis,
@@ -503,6 +514,8 @@ class BBQ:
         branch tuples. A branch has either one node, meaning node-to-ground, or
         two nodes, meaning ``Phi_b - Phi_a``.
         """
+        if isinstance(nodes, tuple) and len(nodes) == 0:
+            return ()
         if isinstance(nodes, tuple) and all(
             isinstance(node, (int, np.integer)) for node in nodes
         ):
@@ -521,11 +534,6 @@ class BBQ:
                     "Each nonlinear branch must be a tuple of node indices."
                 )
             branches.append(self._validate_branch_nodes(branch))
-
-        if len(branches) == 0:
-            raise ValueError(
-                "nonlinear_branches must contain at least one branch."
-            )
 
         return tuple(branches)
 

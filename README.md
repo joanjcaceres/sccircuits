@@ -190,19 +190,16 @@ inverse_inductance_matrix = np.array(
     [[0.0, 0.0], [0.0, 1 / 1.23e-9]]
 )
 
-# Create BBQ object
-bbq = BBQ(
-    capacitance_matrix,
-    inverse_inductance_matrix,
-    nonlinear_branches=(0, 1),
-)
+# Create BBQ object. If there are no nonlinear branches, no extra argument is needed.
+bbq = BBQ(capacitance_matrix, inverse_inductance_matrix)
 
 # Analyze linear modes
 print("Angular frequencies (rad/s):", bbq.angular_frequencies)
 print("Mode frequencies (GHz):", bbq.frequencies_ghz)
-print("Branch-by-mode phase ZPF:", bbq.branch_phase_zpfs)
+print("Branch-by-mode phase ZPF:", bbq.branch_phase_zpfs)  # empty branch axis
 ```
 
+To compute phase ZPFs for a nonlinear branch, pass its direction explicitly.
 For `nonlinear_branches=(node_a, node_b)`, `BBQ` uses branch phase
 `Phi_b - Phi_a`. Reversing the tuple flips the sign of `branch_phase_zpfs`.
 For multiple nonlinear branches, pass a list of branch tuples such as
