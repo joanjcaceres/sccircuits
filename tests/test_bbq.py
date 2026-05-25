@@ -594,6 +594,52 @@ def test_hamiltonian_nonlinear_matches_manual_matrix_cosine():
     )
 
 
+def test_hamiltonian_nonlinear_scalar_external_phase_matches_one_value_list():
+    capacitance_matrix = np.array([[2.0, 0.2], [0.2, 1.5]]) * 1e-15
+    inverse_inductance_matrix = np.array([[4.0, -1.0], [-1.0, 3.0]]) * 1e9
+
+    bbq = BBQ(
+        capacitance_matrix,
+        inverse_inductance_matrix,
+        nonlinear_branches=(0, 1),
+    )
+    bbq.selected_mode_indices = [0]
+    bbq.truncation_dimensions = 5
+
+    from_scalar = bbq.hamiltonian_nonlinear(
+        josephson_energies=1.3,
+        external_phases=0.27,
+    )
+    from_one_value_list = bbq.hamiltonian_nonlinear(
+        josephson_energies=[1.3],
+        external_phases=[0.27],
+    )
+
+    assert np.allclose(from_scalar, from_one_value_list)
+
+
+def test_hamiltonian_nonlinear_rejects_wrong_length_external_phases():
+    capacitance_matrix = np.eye(2)
+    inverse_inductance_matrix = np.diag([2.0, 3.0])
+
+    bbq = BBQ(
+        capacitance_matrix,
+        inverse_inductance_matrix,
+        nonlinear_branches=[(0,), (1,)],
+    )
+    bbq.selected_mode_indices = [0]
+    bbq.truncation_dimensions = 4
+
+    with pytest.raises(
+        ValueError,
+        match="external_phases must contain one value per nonlinear branch",
+    ):
+        bbq.hamiltonian_nonlinear(
+            josephson_energies=[1.3, 0.7],
+            external_phases=[0.27],
+        )
+
+
 @pytest.mark.parametrize(
     (
         "capacitance_matrix,inverse_inductance_matrix,"

@@ -12,38 +12,45 @@ is $\mathbf{C}$, `inverse_inductance_matrix` is $\mathbf{L}^{-1}$,
 $\mathbf{B}$, and `branch_phase_zpfs` is the branch-by-mode matrix
 $\varphi_{\mathrm{zpf}}$.
 
+## Calculation Boundary
+
+`BBQ` starts after a circuit has already been converted into matrix form. It
+does not parse a circuit graph, choose independent loop fluxes, classify
+free or frozen variables, or derive a reduced Lagrangian from elements. Those
+steps belong to a graph or lumped-circuit layer.
+
+Today, the companion cQEDraw workflow owns drawing and graph export. A future
+SCCircuits graph layer should own graph-to-Lagrangian construction, external
+loop-flux handling, variable classification, and physical reductions. `BBQ`
+then acts as the reduced matrix-to-modes backend: it solves the generalized
+eigenproblem, computes branch phase zero-point fluctuations, and builds dense
+Hamiltonian matrices from those modal quantities.
+
+The null-capacitance projection below is therefore a numerical subspace
+selection inside the supplied matrices. It is not a complete symbolic
+elimination of frozen or constrained circuit variables.
+
 ## Linear Circuit
 
 Use node fluxes $\Phi$. The linearized Lagrangian is
 
 $$
-\mathcal{L}
-=
-\frac{1}{2}\dot{\Phi}^T
-\mathbf{C}
-\dot{\Phi}
--
-\frac{1}{2}\Phi^T
-\mathbf{L}^{-1}
-\Phi.
+\mathcal{L} =
+\frac{1}{2}\dot{\Phi}^T \mathbf{C}\dot{\Phi} -
+\frac{1}{2}\Phi^T \mathbf{L}^{-1}\Phi.
 $$
 
 The equations of motion are
 
 $$
-\mathbf{C}\ddot{\Phi}
-+
-\mathbf{L}^{-1}\Phi
-=0.
+\mathbf{C}\ddot{\Phi}+\mathbf{L}^{-1}\Phi=0.
 $$
 
 With the normal-mode ansatz
 $\Phi(t)=\mathbf{v}_k e^{i\omega_k t}$, the modes solve
 
 $$
-\mathbf{L}^{-1}\mathbf{v}_k
-=
-\omega_k^2 \mathbf{C}\mathbf{v}_k.
+\mathbf{L}^{-1}\mathbf{v}_k=\omega_k^2 \mathbf{C}\mathbf{v}_k.
 $$
 
 This generalized eigenvalue problem is the main calculation in `BBQ`.
@@ -62,14 +69,14 @@ $$
 \mathbf{U}^T\mathbf{L}^{-1}\mathbf{U}=\mathbf{\Omega}^2.
 $$
 
-The diagonal entries of $\mathbf{\Omega}^2$ are $\omega_k^2$. The normal
-coordinates $\eta$, defined by
+The diagonal entries of $\mathbf{\Omega}^2$ are $\omega_k^2$. Define the normal
+coordinates $\eta$ by
 
 $$
-\Phi=\mathbf{U}\eta,
+\Phi=\mathbf{U}\eta.
 $$
 
-then produce decoupled harmonic oscillators.
+These coordinates produce decoupled harmonic oscillators.
 
 If the capacitance matrix has null or numerically tiny directions, `BBQ`
 projects them out before solving the eigenproblem. Concretely, it diagonalizes
@@ -89,22 +96,21 @@ capacitances.
 The normal coordinate operators are
 
 $$
-\hat{\eta}_k
-=
+\begin{aligned}
+\hat{\eta}_k &=
 \sqrt{\frac{\hbar}{2\omega_k}}
 (\hat{a}_k^\dagger+\hat{a}_k),
-\qquad
-\hat{\pi}_k
-=
+\\
+\hat{\pi}_k &=
 i\sqrt{\frac{\hbar\omega_k}{2}}
 (\hat{a}_k^\dagger-\hat{a}_k).
+\end{aligned}
 $$
 
 The linear Hamiltonian is
 
 $$
-\hat{H}_{\mathrm{lin}}
-=
+\hat{H}_{\mathrm{lin}} =
 \sum_k \hbar\omega_k
 \left(\hat{a}_k^\dagger\hat{a}_k+\frac{1}{2}\right).
 $$
@@ -118,8 +124,7 @@ energy removes the common offset.
 The node flux operator is
 
 $$
-\hat{\Phi}_j
-=
+\hat{\Phi}_j =
 \sum_k U_{jk}
 \sqrt{\frac{\hbar}{2\omega_k}}
 (\hat{a}_k^\dagger+\hat{a}_k).
@@ -129,8 +134,7 @@ For a nonlinear branch between `node_a` and `node_b`, SCCircuits uses branch
 phase $\Phi_b - \Phi_a$. The dimensionless phase is
 
 $$
-\hat{\varphi}_{ab}
-=
+\hat{\varphi}_{ab} =
 \frac{\hat{\Phi}_{b}-\hat{\Phi}_{a}}{\varphi_0},
 \qquad
 \varphi_0=\frac{\hbar}{2e}.
@@ -139,8 +143,7 @@ $$
 The phase zero-point fluctuation of mode $k$ is therefore
 
 $$
-\varphi_{\mathrm{zpf}}^{ab,k}
-=
+\varphi_{\mathrm{zpf}}^{ab,k} =
 \frac{U_{b k}-U_{a k}}{\varphi_0}
 \sqrt{\frac{\hbar}{2\omega_k}}.
 $$
@@ -154,8 +157,7 @@ $B_{r,node_a}=-1$ and $B_{r,node_b}=1$. For branch `(node,)`, the row contains
 $B_{r,node}=1$. Then the branch-by-mode zero-point fluctuation matrix is
 
 $$
-\varphi_{\mathrm{zpf}}^{r,k}
-=
+\varphi_{\mathrm{zpf}}^{r,k} =
 \frac{(\mathbf{B}\mathbf{U})_{r,k}}{\varphi_0}
 \sqrt{\frac{\hbar}{2\omega_k}}.
 $$
@@ -164,6 +166,34 @@ In `BBQ`, this matrix is available as `branch_phase_zpfs` with shape
 `(number_of_branches, number_of_modes)`. For a single nonlinear branch, the
 first axis has length one, so `branch_phase_zpfs[0, k]` is the phase ZPF of
 mode `k` on that branch.
+
+## Nonlinear Hamiltonian
+
+For each nonlinear branch $r$, `BBQ.hamiltonian_nonlinear()` uses the branch
+phase operator $\hat{\varphi}_r$ built from the selected modes. It returns
+energies in GHz with the convention
+
+$$
+\hat{H}_{\mathrm{nl}} =
+-\sum_r E_{J,r}
+\left[
+s_r \cos(\hat{\varphi}_r+\varphi_{\mathrm{ext},r})
+\,+\,
+\frac{1}{2}\hat{\varphi}_r^2
+\right].
+$$
+
+Here $s_r$ is the Josephson-energy suppression factor from modes omitted from
+the truncated Hilbert space. The quadratic term avoids double-counting the
+linearized Josephson inductance already included in the supplied
+$\mathbf{L}^{-1}$ matrix.
+
+The values passed as `external_phases` are per-branch, gauge-fixed phase
+offsets in radians. They are ordered like `branch_phase_zpfs`. They are not,
+by themselves, guaranteed to be independent physical loop fluxes. The number
+of independent external fluxes is determined by circuit topology and belongs
+to the graph or lumped-circuit layer that prepares the matrices and branch
+offsets before calling `BBQ`.
 
 ## Units
 
