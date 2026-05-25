@@ -5,6 +5,13 @@ an inverse inductance matrix. It is intended for workflows where the linearized
 circuit is already available, either from a circuit-drawing tool or from another
 classical circuit solver.
 
+`BBQ` is the reduced matrix-to-modes backend. It assumes that graph parsing,
+element assembly, loop-flux choices, variable classification, and physical
+reductions have already happened before the matrices are passed in. The
+companion cQEDraw workflow currently owns drawing and matrix export; future
+graph-layer functionality in SCCircuits should prepare the same matrix and
+branch-offset data before calling `BBQ`.
+
 ## Basic Workflow
 
 ```python
@@ -129,9 +136,18 @@ Hnl = bbq.hamiltonian_nonlinear(
 )
 ```
 
+`external_phases` are gauge-fixed phase offsets in radians, ordered by
+nonlinear branch row. They are not necessarily independent physical loop
+fluxes; independence is determined by the circuit graph topology before the
+problem reaches `BBQ`.
+
 Hamiltonian energies are in GHz. `hamiltonian_linear()` includes the harmonic
 zero-point contribution $f_k(n_k + 1/2)$. When analyzing transition
 frequencies, subtract the ground-state energy from each spectrum.
+`hamiltonian_nonlinear()` uses the convention
+$-E_J(s\cos(\varphi+\varphi_\mathrm{ext})+\varphi^2/2)$ per branch. The
+quadratic term avoids double-counting the linearized Josephson inductance
+already included in `inverse_inductance_matrix`.
 
 ## Validation Rules
 
