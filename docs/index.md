@@ -11,6 +11,8 @@ and black-box quantization from circuit matrices.
   zero-point fluctuations used by `BBQ`.
 - [BBQ](api/bbq.md) shows the practical workflow from capacitance and inverse
   inductance matrices to frequencies, phase ZPF values, and Hamiltonians.
+- [cQEDraw](https://cqedraw.org/) is the companion web editor for drawing and
+  analyzing superconducting circuit graphs before passing matrices to `BBQ`.
 
 ## Local Development
 
