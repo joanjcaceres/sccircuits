@@ -30,18 +30,12 @@ pixi run -e sccircuits docs-build
 
 ## Companion GUI Application
 
-The BBQ circuit drawing GUI is now maintained as the separate public
-[`bbq-circuit-designer`](https://github.com/joanjcaceres/bbq-circuit-designer)
-project. It is the companion matrix-builder app for SCCircuits workflows: draw
-a circuit in the GUI, copy the generated capacitance and inverse-inductance
-matrix snippet, then use those matrices with `sccircuits.BBQ`.
-
-Install it directly from GitHub:
-
-```bash
-python -m pip install "bbq-circuit-designer @ git+https://github.com/joanjcaceres/bbq-circuit-designer.git"
-bbq-circuit-designer
-```
+[`cQEDraw`](https://cqedraw.org/) is the companion web app for SCCircuits
+workflows: draw and analyze superconducting circuit graphs, copy the generated
+capacitance and inverse-inductance matrix snippet, then use those matrices with
+`sccircuits.BBQ`. The web app is the actively maintained interface; legacy
+desktop builds and source installs are documented in the
+[`cQEDraw` repository](https://github.com/joanjcaceres/cqedraw).
 
 ## Installation
 
