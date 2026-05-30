@@ -32,6 +32,11 @@ from .fit_analysis import FitAnalysis
 
 # Numerical utilities
 from .iterative_diagonalizer import IterativeHamiltonianDiagonalizer
+from .reduction import (
+    CoordinateReduction,
+    dynamic_coordinates_from_capacitance,
+    reduce_frozen_coordinates,
+)
 from .utilities import lanczos_krylov
 
 # Public API - what gets imported with "from sccircuits import *"
@@ -45,6 +50,9 @@ __all__ = [
     "FitAnalysis",
     # Utilities
     "IterativeHamiltonianDiagonalizer",
+    "CoordinateReduction",
+    "dynamic_coordinates_from_capacitance",
+    "reduce_frozen_coordinates",
     "lanczos_krylov",
     # Package metadata
     "__version__",

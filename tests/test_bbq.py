@@ -121,6 +121,51 @@ def test_tiny_capacitance_direction_is_excluded():
     assert bbq.normal_mode_vectors.shape == (2, 1)
 
 
+def test_exact_singular_capacitance_matrix_uses_positive_subspace():
+    capacitance = 2.0e-15
+    stiffness = 1.0 / 7.0e-9
+    capacitance_matrix = capacitance * np.array([[1.0, -1.0], [-1.0, 1.0]])
+    inverse_inductance_matrix = stiffness * np.eye(2)
+
+    bbq = BBQ(
+        capacitance_matrix,
+        inverse_inductance_matrix,
+        nonlinear_branches=(0, 1),
+    )
+
+    positive_capacitance_basis = np.array([[1.0], [-1.0]]) / np.sqrt(2.0)
+    c_reduced = (
+        positive_capacitance_basis.T @ capacitance_matrix @ (positive_capacitance_basis)
+    )
+    l_inv_reduced = (
+        positive_capacitance_basis.T
+        @ inverse_inductance_matrix
+        @ (positive_capacitance_basis)
+    )
+    expected_omega_squared = l_inv_reduced[0, 0] / c_reduced[0, 0]
+    expected_omega = np.sqrt(expected_omega_squared)
+
+    assert np.allclose(c_reduced, [[2.0 * capacitance]])
+    assert np.allclose(l_inv_reduced, [[stiffness]])
+    assert np.allclose(bbq.angular_frequencies_squared, [expected_omega_squared])
+    assert np.allclose(bbq.angular_frequencies, [expected_omega])
+    assert bbq.normal_mode_vectors.shape == (2, 1)
+    assert np.allclose(bbq.normal_mode_vectors.sum(axis=0), [0.0])
+    assert np.allclose(
+        bbq.normal_mode_vectors.T @ capacitance_matrix @ bbq.normal_mode_vectors,
+        np.eye(1),
+    )
+
+    phi_0 = hbar / (2.0 * e)
+    expected_branch_mode_amplitude = 1.0 / np.sqrt(capacitance)
+    expected_zpf = (
+        expected_branch_mode_amplitude * np.sqrt(hbar / (2.0 * expected_omega)) / phi_0
+    )
+
+    assert bbq.branch_phase_zpfs.shape == (1, 1)
+    assert np.allclose(np.abs(bbq.branch_phase_zpfs), [[expected_zpf]])
+
+
 def test_positive_modes_do_not_require_legacy_sign_crossing():
     capacitance_matrix = np.eye(2)
     inverse_inductance_matrix = np.array([[3.0, 1.0], [1.0, 3.0]])
