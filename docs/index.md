@@ -1,52 +1,54 @@
-# SCCircuits
+# SCCircuits Documentation
 
 SCCircuits is a Python package for numerical superconducting-circuit analysis.
-It focuses on matrix-based black-box quantization, dense Hamiltonian
-construction, spectroscopy workflows, and small research utilities for
-superconducting quantum circuits.
+The public documentation site is currently focused on one complete workflow:
+using `sccircuits.BBQ` for black-box quantization from circuit matrices.
 
-## Start Here
+SCCircuits contains more than `BBQ`, including Hamiltonian construction,
+spectroscopy-fitting utilities, point selection tools, and numerical helpers.
+Those areas should be documented here as their recommended workflows become
+stable. For now, the goal is to make the `BBQ` workflow clear enough that a
+researcher can use it, audit it, and connect it to cQEDraw with confidence.
 
-- [BBQ Researcher Guide](getting-started/bbq-researcher-guide.md) is the best
-  first page for students and researchers using the cQEDraw-to-BBQ workflow. It
-  explains the path from circuit matrices to frequencies, phase ZPFs, and
-  Hamiltonians.
-- [BBQ API](api/bbq.md) shows the practical Python calls for `sccircuits.BBQ`.
-- [Circuit Matrix Quantization](theory/circuit-matrix-quantization.md) is the
-  detailed reference for the matrix reductions and normal-mode calculation.
+## BBQ Documentation Path
 
-## Documentation Coverage
+Start with these pages in order:
 
-This website is the public documentation surface for SCCircuits. It is designed
-to grow module by module rather than hide important details in repository
-folders.
+1. [BBQ Overview](bbq/index.md): what the class does, where it fits, and what
+   assumptions it makes.
+2. [BBQ Quickstart](bbq/quickstart.md): a minimal working matrix example.
+3. [BBQ Examples](bbq/examples.md): worked examples and the planned cQEDraw
+   project-download example.
+4. [BBQ API Reference](api/bbq.md): constructor arguments, public attributes,
+   branch conventions, and Hamiltonian methods.
+5. [Mathematical Reference](theory/circuit-matrix-quantization.md): the
+   matrix-reduction workflow, singular-coordinate handling, units, and phase
+   zero-point fluctuation formulas.
 
-The first complete documentation path is `BBQ`, because it is currently the
-most mature workflow and the one used directly with cQEDraw. SCCircuits also
-contains Hamiltonian construction, spectroscopy-fitting utilities, point
-selection tools, and numerical helpers. Those pieces should be documented here
-as their supported workflows become clearer.
-
-## Typical Workflow
-
-1. Draw or assemble a superconducting circuit.
-2. Export or construct the capacitance matrix, inverse-inductance matrix, and
-   nonlinear branch records.
-3. Pass those numerical objects to `sccircuits.BBQ`.
-4. Inspect mode frequencies, branch phase zero-point fluctuations, and
-   Hamiltonian spectra.
+## cQEDraw Workflow
 
 [`cQEDraw`](https://cqedraw.org/) is the companion web editor for drawing and
 analyzing superconducting circuit graphs before passing matrices to `BBQ`.
 
-## Trust and Scope
+The intended workflow is:
 
-`BBQ` starts from matrices. It does not infer a circuit graph, choose loop
-fluxes, or derive a symbolic Lagrangian. Those decisions belong to the drawing
-or circuit-assembly layer. The theory reference documents how `BBQ` validates
-the matrices, removes frozen or free coordinates, solves the physical oscillator
-subspace, and reconstructs branch phase zero-point fluctuations in the original
-node basis.
+1. Draw or load a superconducting circuit in cQEDraw.
+2. Export the capacitance matrix, inverse-inductance matrix, and Josephson
+   junction records.
+3. Pass those numerical objects to `sccircuits.BBQ`.
+4. Inspect mode frequencies, branch phase zero-point fluctuations, Josephson
+   energies, and Hamiltonian spectra.
+
+## Trust Boundary
+
+`BBQ` starts from matrices. It does not parse a circuit graph, choose loop
+fluxes, choose a gauge, or derive a symbolic Lagrangian. Those decisions belong
+to the drawing or circuit-assembly layer.
+
+The documented responsibility of `BBQ` is narrower and easier to audit: it
+validates the supplied matrices, removes frozen or free coordinates, solves the
+physical oscillator subspace, reconstructs mode vectors in the original node
+basis, computes branch phase ZPFs, and builds dense Hamiltonians when requested.
 
 ## Local Development
 
@@ -56,8 +58,8 @@ Build the documentation site:
 pixi run -e sccircuits docs-build
 ```
 
-Run the numerical test suite:
+Serve it locally:
 
 ```bash
-pixi run -e sccircuits test
+pixi run -e sccircuits mkdocs serve
 ```

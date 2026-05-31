@@ -15,12 +15,12 @@ theme:
 
 nav:
   - Home: index.md
-  - Getting Started:
-      - BBQ Researcher Guide: getting-started/bbq-researcher-guide.md
-  - Theory:
-      - Circuit Matrix Quantization: theory/circuit-matrix-quantization.md
-  - API Reference:
+  - BBQ:
+      - Overview: bbq/index.md
+      - Quickstart: bbq/quickstart.md
+      - Examples: bbq/examples.md
       - BBQ API: api/bbq.md
+      - Mathematical Reference: theory/circuit-matrix-quantization.md
 
 markdown_extensions:
   - admonition

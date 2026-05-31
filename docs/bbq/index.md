@@ -1,22 +1,33 @@
-# BBQ Researcher Guide
+# BBQ Overview
 
-This guide is the recommended entry point for researchers and students who want
-to understand the `sccircuits.BBQ` workflow and how to interpret its results.
+`sccircuits.BBQ` is the matrix-to-modes backend for SCCircuits. It starts from a
+capacitance matrix and an inverse-inductance matrix, then computes the linear
+normal modes and branch phase zero-point fluctuations needed for
+superconducting-circuit Hamiltonians.
 
-SCCircuits contains more than `BBQ`, but this is currently the first workflow
-documented end to end. Future guides should document the other supported
-package workflows through this same website.
+This is currently the first SCCircuits workflow documented end to end. The
+documentation is intentionally focused on making `BBQ` usable and auditable
+before expanding the same level of coverage to the rest of the package.
 
-SCCircuits does not try to replace the full circuit-design workflow. Its main
-role is to take a circuit that has already been converted into matrices and turn
-those matrices into quantities used in superconducting-circuit analysis:
+## What `BBQ` Computes
+
+Given numerical circuit matrices, `BBQ` computes:
 
 - normal-mode frequencies;
 - branch phase zero-point fluctuations;
 - Josephson energies when they are supplied by the matrix-export workflow;
 - dense Hamiltonians for selected modes and nonlinear branches.
 
-## Where SCCircuits Fits
+The most common public quantities are:
+
+- `frequencies_ghz`
+- `angular_frequencies`
+- `normal_mode_vectors`
+- `branch_phase_nodes`
+- `branch_phase_zpfs`
+- `josephson_energies_ghz`
+
+## Where `BBQ` Fits
 
 A typical workflow has three layers:
 
@@ -34,7 +45,7 @@ from explicit numerical matrices. Topology decisions such as loop-flux choices,
 graph parsing, and independent external flux variables belong upstream of
 `BBQ`.
 
-## Minimal Python Workflow
+## Minimal Workflow
 
 ```python
 from sccircuits import BBQ
@@ -57,7 +68,10 @@ The matrix-export function names above are placeholders. In a cQEDraw workflow,
 they correspond to the generated Python snippet that defines the matrices and
 the Josephson branch records.
 
-## What `BBQ` Does Internally
+For a runnable example with explicit matrices, continue to the
+[BBQ Quickstart](quickstart.md).
+
+## Internal Calculation
 
 `BBQ` follows a numerical matrix-reduction workflow before it solves for
 oscillator modes:
@@ -80,18 +94,6 @@ using the original node and junction records supplied by the caller.
 
 For the detailed derivation and tolerance rules, read
 [Circuit Matrix Quantization](../theory/circuit-matrix-quantization.md).
-
-## Reading the Results
-
-The most commonly inspected quantities are:
-
-- `frequencies_ghz`: ordinary mode frequencies in GHz.
-- `angular_frequencies`: angular mode frequencies in rad/s.
-- `normal_mode_vectors`: reconstructed node-basis mode vectors.
-- `branch_phase_nodes`: normalized branch direction records.
-- `branch_phase_zpfs`: branch-by-mode phase zero-point fluctuations.
-- `josephson_energies_ghz`: Josephson energies from junction records, when
-  provided.
 
 For a branch between two nodes, the sign of `branch_phase_zpfs` follows the
 branch direction. Reversing a branch reverses the sign. This is expected and is
@@ -134,7 +136,10 @@ before calling `BBQ`.
 
 ## Next Pages
 
-- [BBQ API](../api/bbq.md) for constructor arguments, public attributes, and
+- [BBQ Quickstart](quickstart.md) for a runnable matrix example.
+- [BBQ Examples](examples.md) for worked examples and the planned cQEDraw
+  project-download example.
+- [BBQ API Reference](../api/bbq.md) for constructor arguments, public attributes, and
   Hamiltonian methods.
 - [Circuit Matrix Quantization](../theory/circuit-matrix-quantization.md) for
   the reduction workflow and mathematical reference.
