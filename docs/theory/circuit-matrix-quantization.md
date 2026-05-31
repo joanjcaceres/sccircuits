@@ -137,10 +137,17 @@ stiffness matrix is projected into this positive capacitance subspace.
 The projected stiffness matrix may still have null directions, corresponding to
 DC or floating modes. `BBQ` diagonalizes the projected stiffness and splits
 oscillatory directions $o$ from zero-potential directions $z$. In that basis,
-the capacitance matrix has blocks
-$\mathbf{C}_{oo}$, $\mathbf{C}_{oz}$, $\mathbf{C}_{zo}$, and
-$\mathbf{C}_{zz}$. At fixed zero-mode charge, the oscillator capacitance is the
-Schur complement
+the capacitance matrix is partitioned as
+
+$$
+\mathbf{C}' =
+\begin{bmatrix}
+\mathbf{C}_{oo} & \mathbf{C}_{oz} \\
+\mathbf{C}_{zo} & \mathbf{C}_{zz}
+\end{bmatrix}.
+$$
+
+At fixed zero-mode charge, the oscillator capacitance is the Schur complement
 
 $$
 \mathbf{C}_{\mathrm{osc}} =
