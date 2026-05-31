@@ -30,7 +30,7 @@ modal quantities.
 The reductions below are numerical matrix reductions. They are not a complete
 symbolic treatment of all graph constraints, external fluxes, or gauge choices.
 
-## Linear Circuit
+## Linear Circuit Matrices
 
 Use node fluxes $\Phi$. The linearized Lagrangian is
 
@@ -53,7 +53,11 @@ $$
 \mathbf{L}^{-1}\mathbf{v}_k=\omega_k^2 \mathbf{C}\mathbf{v}_k.
 $$
 
-This generalized eigenvalue problem is the main calculation in `BBQ`.
+This is the formal generalized eigenvalue problem for an already reduced,
+positive-definite oscillator basis. When the supplied matrices contain frozen
+coordinates, null capacitance directions, or zero-potential directions, `BBQ`
+does not solve this equation directly. It first performs the reductions below
+and then solves the final oscillator problem in the reduced basis.
 
 ## Numerical Reduction Workflow
 
@@ -93,11 +97,11 @@ $$
 where $+$ denotes the Hermitian pseudoinverse. This gives
 
 $$
-\mathbf{C}_{\mathrm{eff}}=\mathbf{C}_{dd},
-\qquad
-\mathbf{K}_{\mathrm{eff}} =
-\mathbf{K}_{dd}
-- \mathbf{K}_{df}\mathbf{K}_{ff}^{+}\mathbf{K}_{fd}.
+\begin{aligned}
+\mathbf{C}_{\mathrm{eff}} &= \mathbf{C}_{dd}, \\
+\mathbf{K}_{\mathrm{eff}} &= \mathbf{K}_{dd}
+{}- \mathbf{K}_{df}\mathbf{K}_{ff}^{+}\mathbf{K}_{fd}.
+\end{aligned}
 $$
 
 The reconstruction
@@ -120,9 +124,7 @@ After frozen-coordinate reduction, `BBQ` diagonalizes the remaining capacitance
 matrix and keeps only positive capacitance eigenvalues:
 
 $$
-\mathbf{C}_{\mathrm{eff}}\mathbf{Q}
-=
-\mathbf{Q}\boldsymbol{\Lambda}_C.
+\mathbf{C}_{\mathrm{eff}}\mathbf{Q} = \mathbf{Q}\boldsymbol{\Lambda}_C.
 $$
 
 Eigenvalues no larger than
@@ -142,8 +144,7 @@ Schur complement
 
 $$
 \mathbf{C}_{\mathrm{osc}} =
-\mathbf{C}_{oo}
--\mathbf{C}_{oz}\mathbf{C}_{zz}^{-1}\mathbf{C}_{zo}.
+\mathbf{C}_{oo} - \mathbf{C}_{oz}\mathbf{C}_{zz}^{-1}\mathbf{C}_{zo}.
 $$
 
 The oscillator reconstruction also includes the zero-mode displacement induced
@@ -151,16 +152,13 @@ by this constraint:
 
 $$
 \mathbf{R}_{\mathrm{osc}} =
-\mathbf{R}_o
--\mathbf{R}_z\mathbf{C}_{zz}^{-1}\mathbf{C}_{zo}.
+\mathbf{R}_o - \mathbf{R}_z\mathbf{C}_{zz}^{-1}\mathbf{C}_{zo}.
 $$
 
 The final oscillator problem is
 
 $$
-\mathbf{K}_{oo}\psi_k
-=
-\omega_k^2\mathbf{C}_{\mathrm{osc}}\psi_k.
+\mathbf{K}_{oo}\psi_k = \omega_k^2\mathbf{C}_{\mathrm{osc}}\psi_k.
 $$
 
 Only positive finite $\omega_k^2$ values are retained.
