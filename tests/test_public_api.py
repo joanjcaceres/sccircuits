@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import sccircuits
-from sccircuits import BBQ, Circuit, FitAnalysis, PointPicker, TransitionFitter
+from sccircuits import (
+    BBQ,
+    Circuit,
+    FitAnalysis,
+    PointPicker,
+    TransitionFitter,
+)
 
 
 def test_get_info_lists_current_public_classes():
@@ -26,3 +32,6 @@ def test_current_top_level_exports_are_importable():
     assert FitAnalysis is sccircuits.FitAnalysis
     assert PointPicker is sccircuits.PointPicker
     assert not hasattr(sccircuits, "CircuitFitter")
+    assert not hasattr(sccircuits, "CoordinateReduction")
+    assert not hasattr(sccircuits, "dynamic_coordinates_from_capacitance")
+    assert not hasattr(sccircuits, "reduce_frozen_coordinates")

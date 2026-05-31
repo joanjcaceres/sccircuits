@@ -15,22 +15,22 @@ $\varphi_{\mathrm{zpf}}$.
 ## Calculation Boundary
 
 `BBQ` starts after a circuit has already been converted into matrix form. It
-does not parse a circuit graph, choose independent loop fluxes, classify
-free or frozen variables, or derive a reduced Lagrangian from elements. Those
-steps belong to a graph or lumped-circuit layer.
+does not parse a circuit graph, choose independent loop fluxes, or derive a
+symbolic Lagrangian from elements. Those steps belong to a graph or
+lumped-circuit layer.
 
 Today, the companion cQEDraw workflow owns drawing and graph export. A future
 SCCircuits graph layer should own graph-to-Lagrangian construction, external
-loop-flux handling, variable classification, and physical reductions. `BBQ`
-then acts as the reduced matrix-to-modes backend: it solves the generalized
-eigenproblem, computes branch phase zero-point fluctuations, and builds dense
-Hamiltonian matrices from those modal quantities.
+loop-flux handling, and topology-level variable classification. `BBQ` then acts
+as the matrix-to-modes backend: it performs numerical reductions needed for
+singular supplied matrices, solves the oscillator eigenproblem, computes branch
+phase zero-point fluctuations, and builds dense Hamiltonian matrices from those
+modal quantities.
 
-The null-capacitance projection below is therefore a numerical subspace
-selection inside the supplied matrices. It is not a complete symbolic
-elimination of frozen or constrained circuit variables.
+The reductions below are numerical matrix reductions. They are not a complete
+symbolic treatment of all graph constraints, external fluxes, or gauge choices.
 
-## Linear Circuit
+## Linear Circuit Matrices
 
 Use node fluxes $\Phi$. The linearized Lagrangian is
 
@@ -53,15 +53,132 @@ $$
 \mathbf{L}^{-1}\mathbf{v}_k=\omega_k^2 \mathbf{C}\mathbf{v}_k.
 $$
 
-This generalized eigenvalue problem is the main calculation in `BBQ`.
+This is the formal generalized eigenvalue problem for an already reduced,
+positive-definite oscillator basis. When the supplied matrices contain frozen
+coordinates, null capacitance directions, or zero-potential directions, `BBQ`
+does not solve this equation directly. It first performs the reductions below
+and then solves the final oscillator problem in the reduced basis.
+
+## Numerical Reduction Workflow
+
+`BBQ` first reduces singular or nearly singular matrix directions before the
+final oscillator solve. All thresholds are relative to the scale of the matrix
+or eigenvalues being tested; they do not use `max(1, scale)`, so SI-size
+capacitances such as femtofarads are not treated as zero merely because they are
+small in absolute units.
+
+### Frozen coordinates
+
+A coordinate is frozen when its entire row and column in $\mathbf{C}$ are zero
+within the capacitance tolerance. Split dynamic coordinates $d$ from frozen
+coordinates $f$:
+
+$$
+\mathbf{C} =
+\begin{bmatrix}
+\mathbf{C}_{dd} & 0 \\
+0 & 0
+\end{bmatrix},
+\qquad
+\mathbf{L}^{-1} =
+\begin{bmatrix}
+\mathbf{K}_{dd} & \mathbf{K}_{df} \\
+\mathbf{K}_{fd} & \mathbf{K}_{ff}
+\end{bmatrix}.
+$$
+
+The frozen coordinates carry no kinetic energy. `BBQ` minimizes the quadratic
+potential with respect to them. This requires the frozen-coordinate stiffness
+block $\mathbf{K}_{ff}$ to be positive definite, so the frozen coordinates are
+uniquely constrained:
+
+$$
+\Phi_f = -\mathbf{K}_{ff}^{-1}\mathbf{K}_{fd}\Phi_d,
+$$
+
+which gives
+
+$$
+\begin{aligned}
+\mathbf{C}_{\mathrm{eff}} &= \mathbf{C}_{dd}, \\
+\mathbf{K}_{\mathrm{eff}} &= \mathbf{K}_{dd}
+{}- \mathbf{K}_{df}\mathbf{K}_{ff}^{-1}\mathbf{K}_{fd}.
+\end{aligned}
+$$
+
+The reconstruction
+
+$$
+\Phi =
+\begin{bmatrix}
+\mathbb{1} \\
+-\mathbf{K}_{ff}^{-1}\mathbf{K}_{fd}
+\end{bmatrix}
+\Phi_d
+$$
+
+is retained so branch phases that touch an eliminated coordinate are still
+computed in the original node basis.
+
+### Null capacitance directions
+
+After frozen-coordinate reduction, `BBQ` diagonalizes the remaining capacitance
+matrix and keeps only positive capacitance eigenvalues:
+
+$$
+\mathbf{C}_{\mathrm{eff}}\mathbf{Q} = \mathbf{Q}\boldsymbol{\Lambda}_C.
+$$
+
+Eigenvalues no larger than
+$10^{-12}\max_i |\lambda_i(\mathbf{C}_{\mathrm{eff}})|$ are treated as null.
+Negative capacitance eigenvalues beyond this tolerance are rejected. The
+stiffness matrix is projected into this positive capacitance subspace.
+
+### Zero-potential modes
+
+The projected stiffness matrix may still have null directions, corresponding to
+DC or floating modes. `BBQ` diagonalizes the projected stiffness and splits
+oscillatory directions $o$ from zero-potential directions $z$. In that basis,
+the capacitance matrix is partitioned as
+
+$$
+\mathbf{C}' =
+\begin{bmatrix}
+\mathbf{C}_{oo} & \mathbf{C}_{oz} \\
+\mathbf{C}_{zo} & \mathbf{C}_{zz}
+\end{bmatrix}.
+$$
+
+At fixed zero-mode charge, the oscillator capacitance is the Schur complement
+
+$$
+\mathbf{C}_{\mathrm{osc}} =
+\mathbf{C}_{oo} - \mathbf{C}_{oz}\mathbf{C}_{zz}^{-1}\mathbf{C}_{zo}.
+$$
+
+The oscillator reconstruction also includes the zero-mode displacement induced
+by this constraint:
+
+$$
+\mathbf{R}_{\mathrm{osc}} =
+\mathbf{R}_o - \mathbf{R}_z\mathbf{C}_{zz}^{-1}\mathbf{C}_{zo}.
+$$
+
+The final oscillator problem is
+
+$$
+\mathbf{K}_{oo}\psi_k = \omega_k^2\mathbf{C}_{\mathrm{osc}}\psi_k.
+$$
+
+Only positive finite $\omega_k^2$ values are retained.
 
 ## Normalization
 
 Each positive-frequency solution of the generalized eigenvalue problem gives
-one normal-mode vector $\mathbf{v}_k$. After removing null capacitance
-directions and zero-frequency modes, `BBQ` collects the remaining physical mode
-vectors into a matrix $\mathbf{U}$, one mode per column. It normalizes those
-columns with the capacitance metric:
+one normal-mode vector $\mathbf{v}_k$ after reconstruction to the original node
+basis. `BBQ` collects the remaining physical mode vectors into a matrix
+$\mathbf{U}$, one mode per column. It normalizes those columns with the
+capacitance metric:
 
 $$
 \mathbf{U}^T\mathbf{C}\mathbf{U}=\mathbb{1},
@@ -77,19 +194,6 @@ $$
 $$
 
 These coordinates produce decoupled harmonic oscillators.
-
-If the capacitance matrix has null or numerically tiny directions, `BBQ`
-projects them out before solving the eigenproblem. Concretely, it diagonalizes
-`C` and keeps only capacitance eigenvalues larger than
-
-$$
-10^{-12}\max_i |\lambda_i(C)|.
-$$
-
-Eigenvalues below this threshold are treated as zero for the purpose of the
-normal-mode calculation. This keeps the calculation on the physical
-capacitance subspace while avoiding numerical divisions by nearly zero
-capacitances.
 
 ## Quantization
 
