@@ -126,7 +126,7 @@ After frozen-coordinate reduction, `BBQ` diagonalizes the remaining capacitance
 matrix and keeps only positive capacitance eigenvalues:
 
 $$
-\mathbf{C}_{\mathrm{eff}}\mathbf{Q} = \mathbf{Q}\boldsymbol{\Lambda}_C.
+\mathbf{C}_{\mathrm{eff}}\mathbf{Q} = \mathbf{Q}\Lambda_C.
 $$
 
 Eigenvalues no larger than
