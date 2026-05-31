@@ -7,12 +7,25 @@ superconducting quantum circuits.
 
 ## Start Here
 
-- [Researcher Guide](getting-started/researcher-guide.md) is the best first
-  page for students and researchers. It explains the workflow from cQEDraw or
-  circuit matrices to frequencies, phase ZPFs, and Hamiltonians.
+- [BBQ Researcher Guide](getting-started/bbq-researcher-guide.md) is the best
+  first page for students and researchers using the cQEDraw-to-BBQ workflow. It
+  explains the path from circuit matrices to frequencies, phase ZPFs, and
+  Hamiltonians.
 - [BBQ API](api/bbq.md) shows the practical Python calls for `sccircuits.BBQ`.
 - [Circuit Matrix Quantization](theory/circuit-matrix-quantization.md) is the
   detailed reference for the matrix reductions and normal-mode calculation.
+
+## Documentation Coverage
+
+This website is the public documentation surface for SCCircuits. It is designed
+to grow module by module rather than hide important details in repository
+folders.
+
+The first complete documentation path is `BBQ`, because it is currently the
+most mature workflow and the one used directly with cQEDraw. SCCircuits also
+contains Hamiltonian construction, spectroscopy-fitting utilities, point
+selection tools, and numerical helpers. Those pieces should be documented here
+as their supported workflows become clearer.
 
 ## Typical Workflow
 

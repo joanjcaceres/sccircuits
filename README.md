@@ -15,11 +15,16 @@ The user-facing documentation is published at:
 
 Recommended starting points:
 
-- [Researcher Guide](https://joanjcaceres.github.io/sccircuits/getting-started/researcher-guide/) explains the practical workflow from cQEDraw or circuit matrices to `BBQ` results.
+- [BBQ Researcher Guide](https://joanjcaceres.github.io/sccircuits/getting-started/bbq-researcher-guide/) explains the practical workflow from cQEDraw or circuit matrices to `BBQ` results.
 - [BBQ API](https://joanjcaceres.github.io/sccircuits/api/bbq/) shows how to call `sccircuits.BBQ`, read frequencies and phase ZPFs, and build Hamiltonians.
 - [Circuit Matrix Quantization](https://joanjcaceres.github.io/sccircuits/theory/circuit-matrix-quantization/) documents the matrix reductions, mode normalization, units, and branch phase zero-point fluctuations.
 
-The Markdown source for the site lives in `docs/`. Build it locally with:
+The site is intentionally incremental. `BBQ` is the first fully documented
+research workflow because it is currently the most mature path between cQEDraw
+and SCCircuits. The rest of the package should be documented through the same
+site as those workflows stabilize.
+
+The Markdown source for the website lives in `docs/`. Build it locally with:
 
 ```bash
 pixi run -e sccircuits docs-build

@@ -1,7 +1,11 @@
-# Researcher Guide
+# BBQ Researcher Guide
 
 This guide is the recommended entry point for researchers and students who want
-to understand what SCCircuits computes and how to interpret the results.
+to understand the `sccircuits.BBQ` workflow and how to interpret its results.
+
+SCCircuits contains more than `BBQ`, but this is currently the first workflow
+documented end to end. Future guides should document the other supported
+package workflows through this same website.
 
 SCCircuits does not try to replace the full circuit-design workflow. Its main
 role is to take a circuit that has already been converted into matrices and turn

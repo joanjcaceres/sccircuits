@@ -16,7 +16,7 @@ theme:
 nav:
   - Home: index.md
   - Getting Started:
-      - Researcher Guide: getting-started/researcher-guide.md
+      - BBQ Researcher Guide: getting-started/bbq-researcher-guide.md
   - Theory:
       - Circuit Matrix Quantization: theory/circuit-matrix-quantization.md
   - API Reference:
