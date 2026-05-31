@@ -5,11 +5,15 @@ capacitance matrix and an inverse-inductance matrix, then computes the linear
 normal modes and branch phase zero-point fluctuations needed for
 superconducting-circuit Hamiltonians.
 
-This is currently the first SCCircuits workflow documented end to end. The
-documentation is intentionally focused on making `BBQ` usable and auditable
-before expanding the same level of coverage to the rest of the package.
+Use `BBQ` when the circuit has already been converted into numerical matrices,
+for example by cQEDraw or by your own lumped-element code.
 
-## What `BBQ` Computes
+## Why It Is Useful
+
+Manual matrix reduction becomes fragile for larger circuits, especially when
+some coordinates have no capacitance, no restoring potential, or are removed by
+constraints. `BBQ` keeps that reduction inside one auditable class and returns
+the quantities needed for the next modeling step.
 
 Given numerical circuit matrices, `BBQ` computes:
 
@@ -18,7 +22,21 @@ Given numerical circuit matrices, `BBQ` computes:
 - Josephson energies when they are supplied by the matrix-export workflow;
 - dense Hamiltonians for selected modes and nonlinear branches.
 
-The most common public quantities are:
+The implementation follows the black-box quantization idea of Nigg et al. for
+using linearized modes as the basis for weakly nonlinear circuits, and follows
+the free/frozen-variable reduction language of Chitta et al. for handling
+non-dynamical directions. See the [Mathematical Reference](../theory/circuit-matrix-quantization.md#references)
+for full citations.
+
+## What You Need to Provide
+
+- `capacitance_matrix`: symmetric capacitance matrix in Farads.
+- `inverse_inductance_matrix`: symmetric inverse-inductance matrix in inverse
+  Henries.
+- `nonlinear_branches` or cQEDraw `junctions`: branch definitions used to
+  compute phase ZPFs.
+
+## What You Get Back
 
 - `frequencies_ghz`
 - `angular_frequencies`
@@ -26,24 +44,6 @@ The most common public quantities are:
 - `branch_phase_nodes`
 - `branch_phase_zpfs`
 - `josephson_energies_ghz`
-
-## Where `BBQ` Fits
-
-A typical workflow has three layers:
-
-1. **Circuit drawing or assembly**: a tool such as
-   [cQEDraw](https://cqedraw.org/) stores the graph, elements, node labels, and
-   branch records.
-2. **Matrix export**: the drawing or assembly layer builds the capacitance
-   matrix, inverse-inductance matrix, and Josephson junction records.
-3. **Matrix-to-modes calculation**: `sccircuits.BBQ` validates the matrices,
-   removes singular directions that do not represent finite-frequency
-   oscillators, solves the remaining modal problem, and reports the results.
-
-This boundary is intentional. `BBQ` should be easy to audit because it starts
-from explicit numerical matrices. Topology decisions such as loop-flux choices,
-graph parsing, and independent external flux variables belong upstream of
-`BBQ`.
 
 ## Minimal Workflow
 
@@ -71,7 +71,17 @@ the Josephson branch records.
 For a runnable example with explicit matrices, continue to the
 [BBQ Quickstart](quickstart.md).
 
-## Internal Calculation
+## Trust Boundary
+
+`BBQ` starts from matrices. It does not parse a circuit drawing, choose a gauge,
+decide which external fluxes are independent, or derive a symbolic Lagrangian.
+Those choices belong to the drawing or circuit-assembly layer.
+
+Its job is narrower: validate the supplied matrices, reduce non-oscillatory
+directions, solve the positive-frequency oscillator subspace, reconstruct mode
+vectors in the original node basis, and compute branch phase ZPFs.
+
+## Reduction Summary
 
 `BBQ` follows a numerical matrix-reduction workflow before it solves for
 oscillator modes:
@@ -92,47 +102,8 @@ The reconstruction step is important for cQEDraw and similar tools. Even when a
 node coordinate is eliminated internally, branch quantities are still reported
 using the original node and junction records supplied by the caller.
 
-For the detailed derivation and tolerance rules, read
-[Circuit Matrix Quantization](../theory/circuit-matrix-quantization.md).
-
-For a branch between two nodes, the sign of `branch_phase_zpfs` follows the
-branch direction. Reversing a branch reverses the sign. This is expected and is
-usually less important than keeping a consistent convention when comparing
-branches or adding external phase offsets.
-
-## Building a Hamiltonian
-
-After inspecting the linear modes, choose which modes to keep and set their
-Hilbert-space dimensions:
-
-```python
-bbq.selected_mode_indices = [0, 1]
-bbq.truncation_dimensions = [20, 12]
-
-H_linear = bbq.hamiltonian_linear()
-H_nonlinear = bbq.hamiltonian_nonlinear(
-    josephson_energies=bbq.josephson_energies_ghz,
-    external_phases=0.0,
-)
-
-H = H_linear + H_nonlinear
-```
-
-Hamiltonian matrices are returned in GHz. When comparing transition
-frequencies, subtract the ground-state energy from the eigenvalue spectrum.
-
-## What `BBQ` Does Not Decide
-
-`BBQ` does not:
-
-- parse a circuit drawing;
-- decide which external fluxes are independent;
-- choose a gauge;
-- derive a symbolic Lagrangian from graph elements;
-- decide which modes are physically relevant for a specific experiment.
-
-Those choices must be made by the researcher or by the circuit-assembly layer
-before calling `BBQ`.
+The detailed derivation and tolerance rules are in the
+[Mathematical Reference](../theory/circuit-matrix-quantization.md).
 
 ## Next Pages
 

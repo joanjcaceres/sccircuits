@@ -6,6 +6,11 @@ The goal is to turn a capacitance matrix `C` and an inverse inductance matrix
 normal-mode frequencies and phase zero-point fluctuations across a nonlinear
 branch.
 
+The black-box quantization motivation follows Nigg et al. The language and
+handling of free and frozen variables follows the computer-aided quantization
+formalism of Chitta et al. Full citations are listed in
+[References](#references).
+
 The code names intentionally follow the symbols below: `capacitance_matrix`
 is $\mathbf{C}$, `inverse_inductance_matrix` is $\mathbf{L}^{-1}$,
 `normal_mode_vectors` is $\mathbf{U}$, `branch_incidence_matrix` is
@@ -66,6 +71,11 @@ final oscillator solve. All thresholds are relative to the scale of the matrix
 or eigenvalues being tested; they do not use `max(1, scale)`, so SI-size
 capacitances such as femtofarads are not treated as zero merely because they are
 small in absolute units.
+
+The classification into frozen, free, and oscillatory coordinates follows the
+computer-aided superconducting-circuit quantization framework of Chitta et al.
+`BBQ` applies the part of that logic needed once the graph has already been
+converted into numerical matrices.
 
 ### Frozen coordinates
 
@@ -306,3 +316,13 @@ offsets before calling `BBQ`.
 - `branch_phase_zpfs` is dimensionless.
 - `hamiltonian_linear()` and `hamiltonian_nonlinear()` return dense Hamiltonian
   matrices in GHz.
+
+## References
+
+- S. E. Nigg, H. Paik, B. Vlastakis, G. Kirchmair, S. Shankar, L. Frunzio,
+  M. H. Devoret, R. J. Schoelkopf, and S. M. Girvin,
+  ["Black-box superconducting circuit quantization"](https://doi.org/10.1103/PhysRevLett.108.240502),
+  Physical Review Letters 108, 240502 (2012).
+- S. P. Chitta, T. Zhao, Z. Huang, I. Mondragon-Shem, and J. Koch,
+  ["Computer-aided quantization and numerical analysis of superconducting circuits"](https://doi.org/10.1088/1367-2630/ac94f2),
+  New Journal of Physics 24, 103020 (2022).
