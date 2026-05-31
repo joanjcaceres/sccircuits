@@ -19,7 +19,6 @@ nav:
       - Circuit Matrix Quantization: theory/circuit-matrix-quantization.md
   - API and Tutorials:
       - BBQ: api/bbq.md
-      - Matrix Reduction: api/reduction.md
 
 markdown_extensions:
   - admonition

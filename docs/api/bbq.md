@@ -156,13 +156,17 @@ already included in `inverse_inductance_matrix`.
 - `capacitance_matrix` and `inverse_inductance_matrix` are finite square matrices.
 - Both matrices are symmetric and have the same shape.
 - `capacitance_matrix` is positive on the retained physical capacitance subspace.
+- Frozen coordinates have a well-defined inverse-inductance Schur reduction.
 - `nonlinear_branches`, when provided, is either one valid branch tuple or an
   iterable of valid branch tuples.
 - Only positive finite normal modes are retained.
 
-Null or numerically tiny capacitance directions are projected out before the
-generalized eigenproblem is solved. Here "tiny" means a capacitance eigenvalue
-no larger than `1e-12 * max(abs(eigenvalues(capacitance_matrix)))`.
+`BBQ` handles several singular-matrix cases directly. Coordinates with zero
+capacitance rows and columns are eliminated by minimizing the quadratic
+potential, null capacitance eigen-directions are projected out, and
+zero-potential modes are removed before solving the positive oscillator
+subspace. Branch phase ZPFs are computed after reconstructing the modes back to
+the original node basis.
 
 ## Main Public Quantities
 
