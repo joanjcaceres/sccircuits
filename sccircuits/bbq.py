@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
 from scipy.constants import e, hbar  # type: ignore[import-untyped]
-from scipy.linalg import cosm, eigh, pinvh, solve  # type: ignore[import-untyped]
+from scipy.linalg import cosm, eigh, solve  # type: ignore[import-untyped]
 from scipy.sparse import diags  # type: ignore[import-untyped]
 
 
@@ -712,26 +712,16 @@ class BBQ:
         l_fd = inverse_inductance_matrix[np.ix_(frozen_indices, dynamic_indices)]
         l_ff = inverse_inductance_matrix[np.ix_(frozen_indices, frozen_indices)]
 
-        cls._validate_positive_semidefinite_matrix(
+        cls._validate_positive_definite_matrix(
             l_ff,
             "the frozen inverse-inductance block",
         )
-        l_ff_pinv = pinvh(l_ff, rtol=_MODE_RELATIVE_TOLERANCE)
-        frozen_from_dynamic = l_ff_pinv @ l_fd
-        residual = l_ff @ frozen_from_dynamic - l_fd
-        if not np.allclose(
-            residual,
-            0.0,
-            rtol=1e-10,
-            atol=cls._matrix_relative_tolerance(
-                inverse_inductance_matrix,
-                _MODE_RELATIVE_TOLERANCE,
-            ),
-        ):
-            raise ValueError(
-                "Frozen coordinates are not constrained by the "
-                "inverse_inductance_matrix potential block."
-            )
+        frozen_from_dynamic = solve(
+            l_ff,
+            l_fd,
+            assume_a="pos",
+            check_finite=True,
+        )
 
         inverse_inductance_reduced = l_dd - l_df @ frozen_from_dynamic
         reduced_to_original = np.zeros(
@@ -897,7 +887,7 @@ class BBQ:
         return rtol * scale if scale > 0.0 else 0.0
 
     @classmethod
-    def _validate_positive_semidefinite_matrix(
+    def _validate_positive_definite_matrix(
         cls,
         matrix: FloatArray,
         name: str,
@@ -907,8 +897,8 @@ class BBQ:
             eigvals,
             _MODE_RELATIVE_TOLERANCE,
         )
-        if np.any(eigvals < -tolerance):
-            raise ValueError(f"{name} must be positive semidefinite.")
+        if np.any(eigvals <= tolerance):
+            raise ValueError(f"{name} must be positive definite.")
 
     def _angular_frequencies(self) -> FloatArray:
         """

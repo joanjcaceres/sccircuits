@@ -156,7 +156,8 @@ already included in `inverse_inductance_matrix`.
 - `capacitance_matrix` and `inverse_inductance_matrix` are finite square matrices.
 - Both matrices are symmetric and have the same shape.
 - `capacitance_matrix` is positive on the retained physical capacitance subspace.
-- Frozen coordinates have a well-defined inverse-inductance Schur reduction.
+- Frozen coordinates have a positive definite inverse-inductance block, giving
+  a unique Schur reduction.
 - `nonlinear_branches`, when provided, is either one valid branch tuple or an
   iterable of valid branch tuples.
 - Only positive finite normal modes are retained.

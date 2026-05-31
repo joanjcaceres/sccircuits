@@ -158,6 +158,23 @@ def test_si_scale_frozen_coordinate_uses_schur_reduction_and_reconstruction():
     )
 
 
+def test_frozen_coordinate_requires_positive_definite_stiffness_block():
+    capacitance_matrix = np.diag([2.0e-15, 0.0])
+    inverse_inductance_matrix = np.array(
+        [
+            [6.0e9, 0.0],
+            [0.0, 0.0],
+        ]
+    )
+
+    with pytest.raises(ValueError, match="positive definite"):
+        BBQ(
+            capacitance_matrix,
+            inverse_inductance_matrix,
+            nonlinear_branches=(1,),
+        )
+
+
 def test_singular_inverse_inductance_drops_dc_mode():
     c0 = 2.0e-15
     c1 = 3.0e-15

@@ -88,19 +88,21 @@ $$
 $$
 
 The frozen coordinates carry no kinetic energy. `BBQ` minimizes the quadratic
-potential with respect to them:
+potential with respect to them. This requires the frozen-coordinate stiffness
+block $\mathbf{K}_{ff}$ to be positive definite, so the frozen coordinates are
+uniquely constrained:
 
 $$
-\Phi_f = -\mathbf{K}_{ff}^{+}\mathbf{K}_{fd}\Phi_d,
+\Phi_f = -\mathbf{K}_{ff}^{-1}\mathbf{K}_{fd}\Phi_d,
 $$
 
-where $+$ denotes the Hermitian pseudoinverse. This gives
+which gives
 
 $$
 \begin{aligned}
 \mathbf{C}_{\mathrm{eff}} &= \mathbf{C}_{dd}, \\
 \mathbf{K}_{\mathrm{eff}} &= \mathbf{K}_{dd}
-{}- \mathbf{K}_{df}\mathbf{K}_{ff}^{+}\mathbf{K}_{fd}.
+{}- \mathbf{K}_{df}\mathbf{K}_{ff}^{-1}\mathbf{K}_{fd}.
 \end{aligned}
 $$
 
@@ -110,7 +112,7 @@ $$
 \Phi =
 \begin{bmatrix}
 \mathbb{1} \\
--\mathbf{K}_{ff}^{+}\mathbf{K}_{fd}
+-\mathbf{K}_{ff}^{-1}\mathbf{K}_{fd}
 \end{bmatrix}
 \Phi_d
 $$
