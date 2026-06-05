@@ -3,6 +3,9 @@
 This page collects examples that help researchers check the `BBQ` workflow from
 matrix input to physical output.
 
+For examples tied directly to automated tests, see
+[BBQ Validation](validation.md).
+
 ## Example 1: Two-Node Lumped Circuit
 
 This example is the same calculation used in the quickstart. It is useful as a
@@ -70,3 +73,6 @@ Each BBQ example should make these items explicit:
 - the number of retained positive-frequency modes;
 - the interpretation of the largest phase ZPF values;
 - any zero modes, frozen coordinates, or removed singular directions.
+
+The [Implementation Notes](implementation-notes.md) explain how those singular
+directions are handled in the current code.

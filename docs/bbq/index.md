@@ -71,6 +71,10 @@ the Josephson branch records.
 For a runnable example with explicit matrices, continue to the
 [BBQ Quickstart](quickstart.md).
 
+For a code-facing audit trail, read the
+[Implementation Notes](implementation-notes.md). For examples tied directly to
+the test suite, read [BBQ Validation](validation.md).
+
 ## Trust Boundary
 
 `BBQ` starts from matrices. It does not parse a circuit drawing, choose a gauge,
@@ -104,12 +108,17 @@ using the original node and junction records supplied by the caller.
 
 The detailed derivation and tolerance rules are in the
 [Mathematical Reference](../theory/circuit-matrix-quantization.md).
+The direct mapping from those formulas to the current implementation is in the
+[Implementation Notes](implementation-notes.md).
 
 ## Next Pages
 
 - [BBQ Quickstart](quickstart.md) for a runnable matrix example.
 - [BBQ Examples](examples.md) for worked examples and the planned cQEDraw
   project-download example.
+- [BBQ Validation](validation.md) for code-backed checks and launch
+  verification.
+- [Implementation Notes](implementation-notes.md) for the math-to-code mapping.
 - [BBQ API Reference](../api/bbq.md) for constructor arguments, public attributes, and
   Hamiltonian methods.
 - [Circuit Matrix Quantization](../theory/circuit-matrix-quantization.md) for

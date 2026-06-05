@@ -9,15 +9,21 @@ superconducting quantum circuits.
 
 ## Documentation
 
-The user-facing documentation is published at:
+The user-facing documentation is configured to publish at:
 
 [https://joanjcaceres.github.io/sccircuits/](https://joanjcaceres.github.io/sccircuits/)
+
+Treat this URL as launched only after the GitHub Pages deployment returns
+`200 OK`. If it returns `404`, build the site locally with the command below
+while the repository Pages settings are being completed.
 
 Recommended starting points:
 
 - [BBQ Overview](https://joanjcaceres.github.io/sccircuits/bbq/) explains the practical workflow from cQEDraw or circuit matrices to `BBQ` results.
 - [BBQ Quickstart](https://joanjcaceres.github.io/sccircuits/bbq/quickstart/) gives a runnable matrix example with frequencies and phase ZPFs.
 - [BBQ Examples](https://joanjcaceres.github.io/sccircuits/bbq/examples/) collects worked examples and the planned cQEDraw project-download example.
+- [BBQ Validation](https://joanjcaceres.github.io/sccircuits/bbq/validation/) explains the code-backed checks behind the matrix reductions and branch conventions.
+- [BBQ Implementation Notes](https://joanjcaceres.github.io/sccircuits/bbq/implementation-notes/) maps the mathematical derivation to the current `BBQ` implementation stages.
 - [BBQ API](https://joanjcaceres.github.io/sccircuits/api/bbq/) shows how to call `sccircuits.BBQ`, read frequencies and phase ZPFs, and build Hamiltonians.
 - [Circuit Matrix Quantization](https://joanjcaceres.github.io/sccircuits/theory/circuit-matrix-quantization/) documents the matrix reductions, mode normalization, units, and branch phase zero-point fluctuations.
 

@@ -19,6 +19,8 @@ nav:
       - Overview: bbq/index.md
       - Quickstart: bbq/quickstart.md
       - Examples: bbq/examples.md
+      - Validation: bbq/validation.md
+      - Implementation Notes: bbq/implementation-notes.md
       - BBQ API: api/bbq.md
       - Mathematical Reference: theory/circuit-matrix-quantization.md
 

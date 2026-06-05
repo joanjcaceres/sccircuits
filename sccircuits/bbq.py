@@ -31,6 +31,42 @@ class _LinearModeSolution:
     capacitance_eigenvalues: FloatArray
 
 
+@dataclass(frozen=True)
+class _FrozenCoordinateReduction:
+    """Matrices after eliminating zero-capacitance coordinates."""
+
+    capacitance_matrix: FloatArray
+    stiffness_matrix: FloatArray
+    original_from_active: FloatArray
+
+
+@dataclass(frozen=True)
+class _PositiveCapacitanceSubspace:
+    """Projected matrices on the positive-capacitance subspace."""
+
+    capacitance_matrix: FloatArray
+    stiffness_matrix: FloatArray
+    original_from_positive_capacitance: FloatArray
+    capacitance_eigenvalues: FloatArray
+
+
+@dataclass(frozen=True)
+class _FreeCoordinateReduction:
+    """Oscillator matrices after separating free zero-potential variables."""
+
+    capacitance_matrix: FloatArray
+    stiffness_matrix: FloatArray
+    positive_capacitance_from_oscillator: FloatArray
+
+
+@dataclass(frozen=True)
+class _FrequencyEigenproblemSolution:
+    """Positive-frequency solution in the oscillator subspace."""
+
+    angular_frequencies_squared: FloatArray
+    oscillator_normal_mode_vectors: FloatArray
+
+
 class BBQ:
     """
     Black-box quantization for superconducting circuits.
@@ -621,135 +657,158 @@ class BBQ:
         capacitance_matrix: FloatArray,
         inverse_inductance_matrix: FloatArray,
     ) -> _LinearModeSolution:
-        """Solve the linear circuit after numerical reductions."""
-        (
-            reduced_capacitance,
-            reduced_inverse_inductance,
-            reduced_to_original,
-        ) = cls._eliminate_frozen_coordinates(
+        """Solve the linear circuit in the order used by the derivation."""
+        frozen_reduction = cls._remove_frozen_variables_by_potential_minimization(
             capacitance_matrix,
             inverse_inductance_matrix,
         )
-        (
-            capacitance_basis,
-            capacitance_eigenvalues,
-        ) = cls._capacitance_physical_subspace(reduced_capacitance)
-
-        capacitance_reduced = np.diag(capacitance_eigenvalues)
-        inverse_inductance_reduced = cls._symmetrize(
-            capacitance_basis.T
-            @ reduced_inverse_inductance
-            @ capacitance_basis
+        positive_capacitance = cls._project_positive_capacitance_subspace(
+            frozen_reduction
         )
-        capacitance_basis_original = reduced_to_original @ capacitance_basis
+        free_reduction = cls._remove_free_variables_by_charge_sector(
+            positive_capacitance.capacitance_matrix,
+            positive_capacitance.stiffness_matrix,
+        )
+        frequency_solution = cls._solve_frequency_eigenproblem(
+            free_reduction.stiffness_matrix,
+            free_reduction.capacitance_matrix,
+        )
 
-        (
-            angular_frequencies_squared,
-            reduced_normal_mode_vectors,
-        ) = cls._solve_oscillator_modes(
-            capacitance_reduced,
-            inverse_inductance_reduced,
+        reduced_normal_mode_vectors = (
+            free_reduction.positive_capacitance_from_oscillator
+            @ frequency_solution.oscillator_normal_mode_vectors
         )
         normal_mode_vectors = (
-            capacitance_basis_original @ reduced_normal_mode_vectors
+            positive_capacitance.original_from_positive_capacitance
+            @ reduced_normal_mode_vectors
         )
 
         return _LinearModeSolution(
-            angular_frequencies_squared=angular_frequencies_squared,
+            angular_frequencies_squared=(
+                frequency_solution.angular_frequencies_squared
+            ),
             normal_mode_vectors=normal_mode_vectors,
             reduced_normal_mode_vectors=reduced_normal_mode_vectors,
-            capacitance_basis=capacitance_basis_original,
-            capacitance_eigenvalues=capacitance_eigenvalues,
+            capacitance_basis=(
+                positive_capacitance.original_from_positive_capacitance
+            ),
+            capacitance_eigenvalues=(
+                positive_capacitance.capacitance_eigenvalues
+            ),
         )
 
     @classmethod
-    def _eliminate_frozen_coordinates(
+    def _remove_frozen_variables_by_potential_minimization(
         cls,
         capacitance_matrix: FloatArray,
         inverse_inductance_matrix: FloatArray,
-    ) -> tuple[FloatArray, FloatArray, FloatArray]:
+    ) -> _FrozenCoordinateReduction:
         """
-        Eliminate coordinates with no kinetic energy by minimizing potential.
+        Remove coordinates with no kinetic term.
 
-        A coordinate is classified as frozen only when its entire row and column
-        in the capacitance matrix are numerically zero. Its reconstructed value
-        is retained in ``reduced_to_original`` so branch phases on eliminated
-        coordinates still use the original nodal basis.
+        A frozen coordinate has a zero row and column in C.  It has no
+        conjugate charge, so its Euler-Lagrange equation is the algebraic
+        potential-minimization condition
+
+            Phi_f = -K_ff^{-1} K_fa Phi_a.
+
+        Substituting this back gives the Schur complement
+
+            K_eff = K_aa - K_af K_ff^{-1} K_fa.
+
+        ``original_from_active`` stores the reconstruction matrix F, so later
+        branch phases can still be evaluated in the original node-flux basis.
         """
         node_count = capacitance_matrix.shape[0]
+        frozen_mask = cls._zero_capacitance_coordinate_mask(
+            capacitance_matrix,
+        )
+
+        if not np.any(frozen_mask):
+            return _FrozenCoordinateReduction(
+                capacitance_matrix=capacitance_matrix.copy(),
+                stiffness_matrix=inverse_inductance_matrix.copy(),
+                original_from_active=np.eye(node_count),
+            )
+
+        active_mask = ~frozen_mask
+        active_indices = np.flatnonzero(active_mask)
+        frozen_indices = np.flatnonzero(frozen_mask)
+        if active_indices.size == 0:
+            raise ValueError(
+                "capacitance_matrix has no positive physical capacitance "
+                "subspace."
+            )
+
+        C_aa = capacitance_matrix[np.ix_(active_indices, active_indices)]
+        K_aa = inverse_inductance_matrix[np.ix_(active_indices, active_indices)]
+        K_af = inverse_inductance_matrix[np.ix_(active_indices, frozen_indices)]
+        K_fa = inverse_inductance_matrix[np.ix_(frozen_indices, active_indices)]
+        K_ff = inverse_inductance_matrix[np.ix_(frozen_indices, frozen_indices)]
+
+        cls._validate_positive_definite_matrix(
+            K_ff,
+            "the frozen inverse-inductance block",
+        )
+        frozen_from_active = solve(
+            K_ff,
+            K_fa,
+            assume_a="pos",
+            check_finite=True,
+        )
+
+        K_eff = K_aa - K_af @ frozen_from_active
+        original_from_active = np.zeros(
+            (node_count, active_indices.size),
+            dtype=float,
+        )
+        original_from_active[active_indices, :] = np.eye(active_indices.size)
+        original_from_active[frozen_indices, :] = -frozen_from_active
+
+        return _FrozenCoordinateReduction(
+            capacitance_matrix=cls._symmetrize(C_aa),
+            stiffness_matrix=cls._symmetrize(K_eff),
+            original_from_active=original_from_active,
+        )
+
+    @classmethod
+    def _zero_capacitance_coordinate_mask(
+        cls,
+        capacitance_matrix: FloatArray,
+    ) -> NDArray[np.bool_]:
+        """Return coordinates whose entire C row and column are zero."""
+        if capacitance_matrix.shape[0] == 0:
+            return np.zeros(0, dtype=bool)
+
         capacitance_threshold = cls._matrix_relative_tolerance(
             capacitance_matrix,
             _CAPACITANCE_RELATIVE_TOLERANCE,
         )
         row_norms = np.max(np.abs(capacitance_matrix), axis=1)
         column_norms = np.max(np.abs(capacitance_matrix), axis=0)
-        frozen_mask = (
+        return np.asarray(
             (row_norms <= capacitance_threshold)
-            & (column_norms <= capacitance_threshold)
-        )
-
-        if not np.any(frozen_mask):
-            return (
-                capacitance_matrix.copy(),
-                inverse_inductance_matrix.copy(),
-                np.eye(node_count),
-            )
-
-        dynamic_mask = ~frozen_mask
-        dynamic_indices = np.flatnonzero(dynamic_mask)
-        frozen_indices = np.flatnonzero(frozen_mask)
-        if dynamic_indices.size == 0:
-            raise ValueError(
-                "capacitance_matrix has no positive physical capacitance "
-                "subspace."
-            )
-
-        capacitance_reduced = capacitance_matrix[
-            np.ix_(dynamic_indices, dynamic_indices)
-        ]
-        l_dd = inverse_inductance_matrix[np.ix_(dynamic_indices, dynamic_indices)]
-        l_df = inverse_inductance_matrix[np.ix_(dynamic_indices, frozen_indices)]
-        l_fd = inverse_inductance_matrix[np.ix_(frozen_indices, dynamic_indices)]
-        l_ff = inverse_inductance_matrix[np.ix_(frozen_indices, frozen_indices)]
-
-        cls._validate_positive_definite_matrix(
-            l_ff,
-            "the frozen inverse-inductance block",
-        )
-        frozen_from_dynamic = solve(
-            l_ff,
-            l_fd,
-            assume_a="pos",
-            check_finite=True,
-        )
-
-        inverse_inductance_reduced = l_dd - l_df @ frozen_from_dynamic
-        reduced_to_original = np.zeros(
-            (node_count, dynamic_indices.size),
-            dtype=float,
-        )
-        reduced_to_original[dynamic_indices, :] = np.eye(dynamic_indices.size)
-        reduced_to_original[frozen_indices, :] = -frozen_from_dynamic
-
-        return (
-            cls._symmetrize(capacitance_reduced),
-            cls._symmetrize(inverse_inductance_reduced),
-            reduced_to_original,
+            & (column_norms <= capacitance_threshold),
+            dtype=bool,
         )
 
     @classmethod
-    def _capacitance_physical_subspace(
+    def _project_positive_capacitance_subspace(
         cls,
-        capacitance_matrix: FloatArray,
-    ) -> tuple[FloatArray, FloatArray]:
+        frozen_reduction: _FrozenCoordinateReduction,
+    ) -> _PositiveCapacitanceSubspace:
         """
-        Calculate the physical capacitance subspace.
+        Project the active coordinates onto positive capacitance directions.
 
-        Tiny or null capacitance directions are projected out after any frozen
-        coordinate reduction. Negative capacitance directions beyond the
-        numerical tolerance are rejected because they do not define a physical
-        kinetic energy.
+        After frozen variables are gone, C may still have null eigenvectors.
+        We diagonalize
+
+            C_eff Q = Q Lambda_C
+
+        and keep only the positive entries of Lambda_C.  The stiffness matrix
+        is rotated into the same basis before free variables are handled.
         """
+        capacitance_matrix = frozen_reduction.capacitance_matrix
         eigvals_C, eigvecs_C = eigh(capacitance_matrix)
         tolerance = cls._values_relative_tolerance(
             eigvals_C,
@@ -757,35 +816,50 @@ class BBQ:
         )
 
         if np.any(eigvals_C < -tolerance):
-            raise ValueError(
-                "capacitance_matrix must be positive semidefinite."
-            )
+            raise ValueError("capacitance_matrix must be positive semidefinite.")
 
-        physical_idx = eigvals_C > tolerance
-        if not np.any(physical_idx):
+        positive_capacitance_idx = eigvals_C > tolerance
+        if not np.any(positive_capacitance_idx):
             raise ValueError(
                 "capacitance_matrix has no positive physical capacitance "
                 "subspace."
             )
 
-        physical_eigvals = eigvals_C[physical_idx]
-        physical_basis = eigvecs_C[:, physical_idx]
+        positive_capacitance_eigenvalues = eigvals_C[
+            positive_capacitance_idx
+        ]
+        Q_positive = eigvecs_C[:, positive_capacitance_idx]
 
-        return physical_basis, physical_eigvals
+        return _PositiveCapacitanceSubspace(
+            capacitance_matrix=np.diag(positive_capacitance_eigenvalues),
+            stiffness_matrix=cls._symmetrize(
+                Q_positive.T @ frozen_reduction.stiffness_matrix @ Q_positive
+            ),
+            original_from_positive_capacitance=(
+                frozen_reduction.original_from_active @ Q_positive
+            ),
+            capacitance_eigenvalues=positive_capacitance_eigenvalues,
+        )
 
     @classmethod
-    def _solve_oscillator_modes(
+    def _remove_free_variables_by_charge_sector(
         cls,
         capacitance_matrix: FloatArray,
-        inverse_inductance_matrix: FloatArray,
-    ) -> tuple[FloatArray, FloatArray]:
+        stiffness_matrix: FloatArray,
+    ) -> _FreeCoordinateReduction:
         """
-        Isolate zero-potential modes and solve positive oscillator modes.
+        Remove free variables by fixing their conserved charge sector.
 
-        The returned mode vectors live in the positive capacitance subspace and
-        include the reconstruction induced by zero-potential coordinates.
+        The stiffness nullspace contains free coordinates.  They are cyclic in
+        the Lagrangian, so the Hamiltonian reduction is done at fixed conserved
+        free charge.  In the neutral sector this replaces C_oo by
+
+            C_tilde = C_oo - C_oz C_zz^{-1} C_zo.
+
+        The reconstruction ``R_o - R_z C_zz^{-1} C_zo`` is retained for the
+        later map back to node fluxes.
         """
-        stiffness_eigvals, stiffness_eigvecs = eigh(inverse_inductance_matrix)
+        stiffness_eigvals, stiffness_eigvecs = eigh(stiffness_matrix)
         stiffness_tolerance = cls._values_relative_tolerance(
             stiffness_eigvals,
             _MODE_RELATIVE_TOLERANCE,
@@ -796,30 +870,26 @@ class BBQ:
                 "on the physical capacitance subspace."
             )
 
-        oscillator_idx = stiffness_eigvals > stiffness_tolerance
-        if not np.any(oscillator_idx):
+        oscillator_mask = stiffness_eigvals > stiffness_tolerance
+        if not np.any(oscillator_mask):
             raise ValueError("No positive finite circuit modes were found.")
 
-        zero_idx = ~oscillator_idx
-        oscillator_basis = stiffness_eigvecs[:, oscillator_idx]
-        oscillator_stiffness = np.diag(stiffness_eigvals[oscillator_idx])
-        oscillator_reconstruction = oscillator_basis
-        oscillator_capacitance = cls._symmetrize(
-            oscillator_basis.T @ capacitance_matrix @ oscillator_basis
-        )
+        free_mask = ~oscillator_mask
+        R_o = stiffness_eigvecs[:, oscillator_mask]
+        K_oo = np.diag(stiffness_eigvals[oscillator_mask])
+        oscillator_from_positive_capacitance = R_o
+        C_tilde = cls._symmetrize(R_o.T @ capacitance_matrix @ R_o)
 
-        if np.any(zero_idx):
-            zero_basis = stiffness_eigvecs[:, zero_idx]
-            c_oo = oscillator_capacitance
-            c_oz = oscillator_basis.T @ capacitance_matrix @ zero_basis
-            c_zo = c_oz.T
-            c_zz = cls._symmetrize(
-                zero_basis.T @ capacitance_matrix @ zero_basis
-            )
+        if np.any(free_mask):
+            R_z = stiffness_eigvecs[:, free_mask]
+            C_oo = C_tilde
+            C_oz = R_o.T @ capacitance_matrix @ R_z
+            C_zo = C_oz.T
+            C_zz = cls._symmetrize(R_z.T @ capacitance_matrix @ R_z)
             try:
-                zero_from_oscillator = solve(
-                    c_zz,
-                    c_zo,
+                free_from_oscillator = solve(
+                    C_zz,
+                    C_zo,
                     assume_a="pos",
                     check_finite=True,
                 )
@@ -829,17 +899,35 @@ class BBQ:
                     "block to be eliminated."
                 ) from exc
 
-            oscillator_capacitance = cls._symmetrize(
-                c_oo - c_oz @ zero_from_oscillator
-            )
-            oscillator_reconstruction = (
-                oscillator_basis - zero_basis @ zero_from_oscillator
+            C_tilde = cls._symmetrize(C_oo - C_oz @ free_from_oscillator)
+            oscillator_from_positive_capacitance = (
+                R_o - R_z @ free_from_oscillator
             )
 
+        return _FreeCoordinateReduction(
+            capacitance_matrix=C_tilde,
+            stiffness_matrix=K_oo,
+            positive_capacitance_from_oscillator=(
+                oscillator_from_positive_capacitance
+            ),
+        )
+
+    @classmethod
+    def _solve_frequency_eigenproblem(
+        cls,
+        stiffness_matrix: FloatArray,
+        capacitance_matrix: FloatArray,
+    ) -> _FrequencyEigenproblemSolution:
+        """
+        Solve K_oo W = omega^2 C_tilde W for positive finite modes.
+
+        ``scipy.linalg.eigh`` returns eigenvectors normalized by C_tilde, so
+        the reconstructed node-flux modes satisfy U.T @ C @ U = I.
+        """
         try:
-            omega_squared_all, oscillator_modes_all = eigh(
-                oscillator_stiffness,
-                oscillator_capacitance,
+            omega_squared_all, normal_modes_all = eigh(
+                stiffness_matrix,
+                capacitance_matrix,
             )
         except Exception as exc:
             raise ValueError(
@@ -865,11 +953,10 @@ class BBQ:
         if not np.any(positive_idx):
             raise ValueError("No positive finite circuit modes were found.")
 
-        omega_squared = omega_squared_all[positive_idx]
-        oscillator_modes = oscillator_modes_all[:, positive_idx]
-        reduced_modes = oscillator_reconstruction @ oscillator_modes
-
-        return omega_squared, reduced_modes
+        return _FrequencyEigenproblemSolution(
+            angular_frequencies_squared=omega_squared_all[positive_idx],
+            oscillator_normal_mode_vectors=normal_modes_all[:, positive_idx],
+        )
 
     @staticmethod
     def _symmetrize(matrix: FloatArray) -> FloatArray:
@@ -933,14 +1020,21 @@ class BBQ:
             rows follow ``branch_phase_nodes`` and the columns follow
             ``angular_frequencies``.
         """
-        phi_0 = hbar / (2.0 * e)
-        zpf_flux = np.sqrt(hbar / (2.0 * self.angular_frequencies))
-        branch_mode_amplitudes = (
+        reduced_flux_quantum = hbar / (2.0 * e)
+        normal_coordinate_zpf_flux = np.sqrt(
+            hbar / (2.0 * self.angular_frequencies)
+        )
+
+        # Each entry is (B @ U)[branch, mode], the branch flux produced by one
+        # unit of the capacitance-normalized normal coordinate.
+        branch_flux_per_normal_coordinate = (
             self.branch_incidence_matrix @ self.normal_mode_vectors
         )
 
         return np.asarray(
-            branch_mode_amplitudes * zpf_flux[np.newaxis, :] / phi_0,
+            branch_flux_per_normal_coordinate
+            * normal_coordinate_zpf_flux[np.newaxis, :]
+            / reduced_flux_quantum,
             dtype=float,
         )
 
