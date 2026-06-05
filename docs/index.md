@@ -18,11 +18,13 @@ the one that connects directly to cQEDraw exports.
 
 ## BBQ Documentation Path
 
-For first use, read only the first two pages:
+For first use, read these pages:
 
-1. [BBQ Overview](bbq/index.md): what the class does, where it fits, and what
+1. [Installation and Performance](install.md): how to install SCCircuits with
+   pip and when Pixi is useful for development.
+2. [BBQ Overview](bbq/index.md): what the class does, where it fits, and what
    assumptions it makes.
-2. [BBQ Quickstart](bbq/quickstart.md): a minimal working matrix example.
+3. [BBQ Quickstart](bbq/quickstart.md): a minimal working matrix example.
 
 Then continue as needed:
 
@@ -48,6 +50,14 @@ The intended workflow is:
    energies, and Hamiltonian spectra.
 
 ## Local Development
+
+Install the released package:
+
+```bash
+python -m pip install sccircuits
+```
+
+For repository development, use Pixi.
 
 Build the documentation site:
 

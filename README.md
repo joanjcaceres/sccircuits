@@ -9,13 +9,9 @@ superconducting quantum circuits.
 
 ## Documentation
 
-The user-facing documentation is configured to publish at:
+The user-facing documentation is published at:
 
 [https://joanjcaceres.github.io/sccircuits/](https://joanjcaceres.github.io/sccircuits/)
-
-Treat this URL as launched only after the GitHub Pages deployment returns
-`200 OK`. If it returns `404`, build the site locally with the command below
-while the repository Pages settings are being completed.
 
 Recommended starting points:
 
@@ -52,10 +48,30 @@ analyzing superconducting circuit graphs. A typical workflow is:
 
 ## Installation
 
-### Recommended: Pixi
+### Recommended: pip
 
-Pixi is the default environment manager for this repository. It keeps NumPy and
-SciPy binary dependencies reproducible across local development machines.
+Researchers should install SCCircuits from PyPI:
+
+```bash
+python -m pip install sccircuits
+```
+
+This installs the pure-Python SCCircuits package plus NumPy, SciPy,
+Matplotlib, SymPy, and PyYAML from normal Python wheels. Pixi is not required
+to use the package.
+
+Optional extras are available for notebook widgets, development, and docs:
+
+```bash
+python -m pip install "sccircuits[interactive]"
+python -m pip install "sccircuits[dev]"
+python -m pip install "sccircuits[docs]"
+```
+
+### Development: Pixi
+
+Pixi remains the recommended contributor environment because it keeps the
+NumPy/SciPy stack reproducible while developing and testing the repository.
 
 ```bash
 git clone https://github.com/joanjcaceres/sccircuits.git
@@ -64,16 +80,25 @@ pixi run -e sccircuits install-dev
 pixi run -e sccircuits test
 ```
 
-### Alternative: pip and venv
+For local editable development without Pixi:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev,interactive]"
+python -m pip install -e ".[dev,interactive,docs]"
 ```
 
-For Apple Silicon machines, Pixi is recommended because the repository pins a
-known-good BLAS/LAPACK setup.
+### Performance Baseline
+
+SCCircuits relies on NumPy and SciPy wheels for cross-platform BLAS/LAPACK
+linear algebra. The first public package does not compile native extensions or
+require GPU-specific backends.
+
+To record a quick local diagonalization baseline:
+
+```bash
+python benchmarks/diagonalization_smoke.py
+```
 
 ## Quick Example
 
@@ -134,6 +159,16 @@ Run the main checks with:
 pixi run -e sccircuits test
 pixi run -e sccircuits lint
 pixi run -e sccircuits docs-build
+```
+
+Check the pip package path with:
+
+```bash
+python -m build
+python -m twine check dist/*
+python -m pip install dist/sccircuits-0.1.0-py3-none-any.whl
+python -m pip check
+python tests/pip_smoke.py
 ```
 
 If dependency resolution becomes inconsistent, recreate the Pixi environment:

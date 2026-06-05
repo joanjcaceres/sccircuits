@@ -1,8 +1,8 @@
 ## General GitHub PR Workflow
 
-- For every repository and project, request GitHub Copilot as a reviewer on pull requests by default.
-- Use the supported GitHub CLI reviewer value `@copilot` when available: `gh pr edit <PR> --add-reviewer "@copilot"`.
-- If the installed `gh` version does not support `@copilot`, use a current official GitHub CLI binary rather than the older system `gh`.
+- Do not request GitHub Copilot as a pull-request reviewer by default.
+- Only request Copilot review when the user explicitly asks for it for that PR.
+- Do not use `@copilot` reviewer requests in normal PR workflow.
 
 ## GitHub Issue Workflow
 

@@ -33,10 +33,18 @@ except ImportError:
     import json as yaml
 
 import numpy as np
-from IPython.display import clear_output
 from scipy import stats
 from scipy.linalg import eigh
 from scipy.optimize import least_squares, differential_evolution
+
+try:
+    from IPython.display import clear_output
+except ImportError:  # pragma: no cover - exercised by base pip installs
+
+    def clear_output(*, wait: bool = False) -> None:
+        """No-op fallback when IPython is not installed."""
+
+        return None
 
 Transition = Tuple[int, int]  # (i, j) with j > i
 
