@@ -1,6 +1,7 @@
 # SCCircuits
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17751124.svg)](https://doi.org/10.5281/zenodo.17751124)
+[![PyPI](https://img.shields.io/pypi/v/sccircuits.svg)](https://pypi.org/project/sccircuits/)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.17751124-blue.svg)](https://doi.org/10.5281/zenodo.17751124)
 
 SCCircuits is a Python package for numerical superconducting-circuit analysis.
 It focuses on matrix-based black-box quantization, dense Hamiltonian
