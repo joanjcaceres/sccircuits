@@ -1,6 +1,7 @@
 # SCCircuits
 
 [![PyPI](https://img.shields.io/pypi/v/sccircuits.svg)](https://pypi.org/project/sccircuits/)
+[![Docs](https://img.shields.io/website?label=docs&url=https%3A%2F%2Fjoanjcaceres.github.io%2Fsccircuits%2F)](https://joanjcaceres.github.io/sccircuits/)
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.17751124-blue.svg)](https://doi.org/10.5281/zenodo.17751124)
 
 SCCircuits is a Python package for numerical superconducting-circuit analysis.
