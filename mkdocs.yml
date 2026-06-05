@@ -15,6 +15,7 @@ theme:
 
 nav:
   - Home: index.md
+  - Installation and Performance: install.md
   - BBQ:
       - Overview: bbq/index.md
       - Quickstart: bbq/quickstart.md

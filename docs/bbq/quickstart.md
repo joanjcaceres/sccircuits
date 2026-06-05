@@ -6,16 +6,16 @@ main public quantities.
 
 ## Install
 
-For local development in this repository:
+For normal use:
 
 ```bash
-pixi run -e sccircuits install-dev
+python -m pip install sccircuits
 ```
 
-For a plain Python environment:
+For local editable development in this repository:
 
 ```bash
-pip install -e ".[dev,interactive]"
+python -m pip install -e ".[dev,interactive,docs]"
 ```
 
 ## Define the Matrices
