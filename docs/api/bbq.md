@@ -1,4 +1,4 @@
-# BBQ
+# BBQ API Reference
 
 `sccircuits.BBQ` implements black-box quantization from a capacitance matrix and
 an inverse inductance matrix. It is intended for workflows where the linearized
@@ -11,6 +11,32 @@ reductions have already happened before the matrices are passed in. The
 companion cQEDraw workflow currently owns drawing and matrix export; future
 graph-layer functionality in SCCircuits should prepare the same matrix and
 branch-offset data before calling `BBQ`.
+
+## Constructor
+
+```python
+BBQ(
+    capacitance_matrix,
+    inverse_inductance_matrix,
+    nonlinear_branches=None,
+    *,
+    junctions=None,
+)
+```
+
+Arguments:
+
+- `capacitance_matrix`: symmetric capacitance matrix in Farads.
+- `inverse_inductance_matrix`: symmetric inverse-inductance matrix in inverse
+  Henries.
+- `nonlinear_branches`: one branch tuple or a list of branch tuples. Use this
+  when the caller knows the nonlinear branch direction but does not have
+  cQEDraw junction records.
+- `junctions`: cQEDraw-style Josephson junction records. Use this when the
+  matrix export includes branch direction, matrix node indices, and Josephson
+  parameters.
+
+Pass either `nonlinear_branches` or `junctions`, not both.
 
 ## Basic Workflow
 
@@ -169,23 +195,35 @@ zero-potential modes are removed before solving the positive oscillator
 subspace. Branch phase ZPFs are computed after reconstructing the modes back to
 the original node basis.
 
-## Main Public Quantities
+## Public Attributes
 
-`BBQ` exposes the physical quantities used in the generalized-eigenproblem
-workflow:
+`BBQ` exposes the physical quantities used in the matrix-to-modes workflow.
 
-- `capacitance_matrix`
-- `inverse_inductance_matrix`
-- `nonlinear_branches`
-- `branch_phase_nodes`
-- `branch_incidence_matrix`
-- `angular_frequencies_squared`
-- `angular_frequencies`
-- `frequencies_ghz`
-- `normal_mode_vectors`
-- `branch_phase_zpfs`
-- `josephson_energies_ghz`
-- `selected_mode_indices`
-- `truncation_dimensions`
-- `branch_phase_operators`
-- `josephson_suppression_factors`
+| Attribute | Meaning |
+| --- | --- |
+| `capacitance_matrix` | Input capacitance matrix in Farads. |
+| `inverse_inductance_matrix` | Input inverse-inductance matrix in inverse Henries. |
+| `nonlinear_branches` | Normalized nonlinear branch tuples. |
+| `branch_phase_nodes` | One `(positive_node, negative_node)` pair per nonlinear branch. |
+| `branch_incidence_matrix` | Branch-by-node incidence matrix used for branch phase differences. |
+| `angular_frequencies_squared` | Positive oscillator eigenvalues in `(rad/s)^2`. |
+| `angular_frequencies` | Positive angular frequencies in rad/s. |
+| `frequencies_ghz` | Ordinary frequencies in GHz. |
+| `normal_mode_vectors` | Capacitance-normalized normal-mode vectors in the original node basis. |
+| `branch_phase_zpfs` | Branch-by-mode dimensionless phase zero-point fluctuation matrix. |
+| `josephson_energies_ghz` | Josephson energies in GHz when every junction record provides enough data. |
+| `selected_mode_indices` | Mode indices retained for Hamiltonian construction. |
+| `truncation_dimensions` | Hilbert-space dimension for each selected mode. |
+| `branch_phase_operators` | Branch phase operators for the selected truncated Hilbert space. |
+| `josephson_suppression_factors` | Suppression factors from modes omitted from the truncated Hilbert space. |
+
+## Public Methods
+
+| Method | Purpose |
+| --- | --- |
+| `hamiltonian_linear()` | Build the selected-mode harmonic Hamiltonian in GHz. |
+| `hamiltonian_nonlinear(josephson_energies, external_phases)` | Build the Josephson nonlinear Hamiltonian in GHz. |
+| `plot_modes(which=0)` | Plot selected capacitance-normalized linear mode shapes. |
+
+Hamiltonian methods require `selected_mode_indices` and
+`truncation_dimensions` to be set first.

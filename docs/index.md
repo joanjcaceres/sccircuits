@@ -1,29 +1,62 @@
-# SCCircuits
+# SCCircuits Documentation
 
-SCCircuits is a Python package for numerical superconducting-circuit analysis.
-It includes tools for circuit Hamiltonians, spectroscopy fitting, point picking,
-and black-box quantization from circuit matrices.
+SCCircuits helps researchers turn superconducting-circuit matrices into the
+quantities they usually need next: mode frequencies, branch phase zero-point
+fluctuations, and Hamiltonians.
 
-## Documentation Map
+The site is currently focused on `sccircuits.BBQ`, the most mature workflow and
+the one that connects directly to cQEDraw exports.
 
-- [Circuit Matrix Quantization](theory/circuit-matrix-quantization.md) explains
-  the generalized eigenproblem, mode normalization, and branch phase
-  zero-point fluctuations used by `BBQ`.
-- [BBQ](api/bbq.md) shows the practical workflow from capacitance and inverse
-  inductance matrices to frequencies, phase ZPF values, and Hamiltonians.
-- [cQEDraw](https://cqedraw.org/) is the companion web editor for drawing and
-  analyzing superconducting circuit graphs before passing matrices to `BBQ`.
+## Why Start with BBQ?
+
+- You can draw or assemble a circuit elsewhere and pass explicit matrices to
+  Python.
+- You can inspect frequencies and phase ZPFs without manually reducing large
+  matrix problems.
+- You can keep the connection to original cQEDraw junction records while `BBQ`
+  handles frozen, free, or zero-mode directions internally.
+
+## BBQ Documentation Path
+
+For first use, read only the first two pages:
+
+1. [BBQ Overview](bbq/index.md): what the class does, where it fits, and what
+   assumptions it makes.
+2. [BBQ Quickstart](bbq/quickstart.md): a minimal working matrix example.
+
+Then continue as needed:
+
+- [BBQ Examples](bbq/examples.md): worked examples and the planned cQEDraw
+  project-download example.
+- [BBQ API Reference](api/bbq.md): constructor arguments, public attributes,
+  branch conventions, and Hamiltonian methods.
+- [Mathematical Reference](theory/circuit-matrix-quantization.md): the
+  underlying matrix reductions and formulas.
+
+## cQEDraw Workflow
+
+[`cQEDraw`](https://cqedraw.org/) is the companion web editor for drawing and
+analyzing superconducting circuit graphs before passing matrices to `BBQ`.
+
+The intended workflow is:
+
+1. Draw or load a superconducting circuit in cQEDraw.
+2. Export the capacitance matrix, inverse-inductance matrix, and Josephson
+   junction records.
+3. Pass those numerical objects to `sccircuits.BBQ`.
+4. Inspect mode frequencies, branch phase zero-point fluctuations, Josephson
+   energies, and Hamiltonian spectra.
 
 ## Local Development
 
-Install the Pixi environment and run the docs build:
+Build the documentation site:
 
 ```bash
 pixi run -e sccircuits docs-build
 ```
 
-Run the numerical test suite:
+Serve it locally:
 
 ```bash
-pixi run -e sccircuits test
+pixi run -e sccircuits mkdocs serve
 ```
