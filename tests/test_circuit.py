@@ -1,10 +1,12 @@
 """Unit tests for the Circuit class, including nonlinear and second-harmonic features."""
 
+from time import perf_counter
+
 import numpy as np
 from scipy.linalg import cosm
 from scipy.sparse import diags
 
-from sccircuits import Circuit
+from sccircuits import Circuit, cosine_fock_matrix
 
 
 def _phi_operator(dimension: int, phi_zpf: float) -> np.ndarray:
@@ -60,13 +62,116 @@ def test_second_harmonic_hamiltonian_contribution():
     h_nl = _dense(circuit.hamiltonian_nl())
 
     diag = freq * (np.arange(dimension) + 0.5)
-    phi_op = _phi_operator(dimension, phi_zpf)
-    phi_shift = phi_op + phase_ext * np.eye(dimension)
     expected = np.diag(diag)
-    expected -= Ej * cosm(phi_shift)
-    expected -= Ej_second * cosm(2.0 * phi_shift)
+    expected -= Ej * cosine_fock_matrix(dimension, phi_zpf, phase_ext)
+    expected -= Ej_second * cosine_fock_matrix(
+        dimension,
+        2.0 * phi_zpf,
+        2.0 * phase_ext,
+    )
 
     assert np.allclose(h_nl, expected)
+
+
+def test_hamiltonian_uses_projected_cosine_instead_of_truncated_matrix_cosine():
+    dimension = 8
+    phase_zpf = 0.45
+    phase_ext = 0.23
+    circuit = Circuit(
+        non_linear_frequency=5.0,
+        non_linear_phase_zpf=phase_zpf,
+        dimensions=[dimension],
+        Ej=1.0,
+        phase_ext=phase_ext,
+    )
+
+    hamiltonian = _dense(circuit.hamiltonian_nl())
+    harmonic = np.diag(5.0 * (np.arange(dimension) + 0.5))
+    cosine_from_hamiltonian = harmonic - hamiltonian
+
+    reference_dimension = 48
+    reference_phase = _phi_operator(reference_dimension, phase_zpf)
+    projected_reference = cosm(
+        reference_phase + phase_ext * np.eye(reference_dimension)
+    )[:dimension, :dimension]
+    truncated_cosine = cosm(
+        _phi_operator(dimension, phase_zpf) + phase_ext * np.eye(dimension)
+    )
+
+    assert np.allclose(cosine_from_hamiltonian, projected_reference, atol=1e-13)
+    assert not np.allclose(cosine_from_hamiltonian, truncated_cosine, atol=1e-8)
+
+
+def test_fermionic_half_phase_coupling_uses_projected_cosine():
+    dimension = 7
+    phase_zpf = 0.38
+    phase_ext = -0.24
+    circuit = Circuit(
+        non_linear_frequency=5.0,
+        non_linear_phase_zpf=phase_zpf,
+        dimensions=[dimension],
+        Ej=1.0,
+        Gamma=0.1,
+        epsilon_r=0.2,
+        phase_ext=phase_ext,
+    )
+
+    _, cos_half, _ = circuit.hamiltonian_nl(return_coupling_ops=True)
+
+    assert np.allclose(
+        cos_half,
+        cosine_fock_matrix(
+            dimension,
+            phase_zpf / 2.0,
+            phase_ext / 2.0,
+        ),
+    )
+
+
+def test_single_mode_hamiltonian_is_faster_than_truncated_matrix_cosine():
+    dimension = 96
+    frequency = 5.0
+    phase_zpf = 0.32
+    phase_ext = 0.21
+    Ej = 1.2
+    Ej_second = 0.3
+    circuit = Circuit(
+        non_linear_frequency=frequency,
+        non_linear_phase_zpf=phase_zpf,
+        dimensions=[dimension],
+        Ej=Ej,
+        Ej_second=Ej_second,
+        phase_ext=phase_ext,
+    )
+    phase_shift = (
+        _phi_operator(dimension, phase_zpf)
+        + phase_ext * np.eye(dimension)
+    )
+
+    def legacy_hamiltonian() -> np.ndarray:
+        harmonic = np.diag(frequency * (np.arange(dimension) + 0.5))
+        return (
+            harmonic
+            - Ej * cosm(phase_shift)
+            - Ej_second * cosm(2.0 * phase_shift)
+        )
+
+    def best_duration(callback, repeats: int = 5) -> float:
+        durations = []
+        for _ in range(repeats):
+            start = perf_counter()
+            callback()
+            durations.append(perf_counter() - start)
+        return min(durations)
+
+    # Warm both SciPy and the dimension-only analytical cache before timing.
+    circuit.hamiltonian_nl()
+    legacy_hamiltonian()
+
+    analytical_duration = best_duration(circuit.hamiltonian_nl)
+    legacy_duration = best_duration(legacy_hamiltonian)
+
+    assert analytical_duration <= legacy_duration
 
 
 def test_second_harmonic_default_matches_explicit_zero():
@@ -111,6 +216,37 @@ def test_gradient_names_include_second_harmonic():
     assert "Ej_second" in names
     idx = names.index("Ej_second")
     assert gradients.shape[1] > idx
+
+
+def test_nonlinear_gradients_match_finite_differences():
+    parameters = {
+        "non_linear_frequency": 4.5,
+        "non_linear_phase_zpf": 0.18,
+        "dimensions": [9],
+        "Ej": 0.8,
+        "Ej_second": 0.2,
+        "phase_ext": 0.27,
+    }
+    circuit = Circuit(**parameters)
+    _, _, gradients, names = circuit.eigensystem_with_gradients(truncation=6)
+    step = 1e-6
+
+    for parameter_name in ("non_linear_phase_zpf", "Ej", "Ej_second"):
+        upper_parameters = parameters | {
+            parameter_name: parameters[parameter_name] + step
+        }
+        lower_parameters = parameters | {
+            parameter_name: parameters[parameter_name] - step
+        }
+        upper_energies, _ = Circuit(**upper_parameters).eigensystem(truncation=6)
+        lower_energies, _ = Circuit(**lower_parameters).eigensystem(truncation=6)
+        finite_difference = (upper_energies - lower_energies) / (2.0 * step)
+
+        assert np.allclose(
+            gradients[:, names.index(parameter_name)],
+            finite_difference,
+            atol=2e-7,
+        )
 
 
 def test_harmonic_inputs_retrievable_after_factory_construction():

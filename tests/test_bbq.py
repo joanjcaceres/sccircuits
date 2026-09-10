@@ -4,10 +4,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 from scipy.constants import e, hbar
-from scipy.linalg import cosm, eigh
+from scipy.linalg import eigh
 from scipy.sparse import diags
 
-from sccircuits import BBQ
+from sccircuits import BBQ, cosine_fock_product_matrix
 
 
 def _josephson_branch_record(
@@ -640,20 +640,25 @@ def test_hamiltonian_nonlinear_sums_multiple_nonlinear_branches():
     bbq.selected_mode_indices = [0]
     bbq.truncation_dimensions = dimension
 
-    data = np.sqrt(np.arange(1, dimension))
-    identity = np.eye(dimension)
     expected = np.zeros((dimension, dimension))
     suppression_factors = np.exp(
         -0.5 * np.sum(bbq.branch_phase_zpfs[:, [1]] ** 2, axis=1)
     )
     for branch_index, josephson_energy in enumerate(josephson_energies):
+        phase_zpf = bbq.branch_phase_zpfs[branch_index, 0]
         phi_operator = (
-            bbq.branch_phase_zpfs[branch_index, 0]
-            * diags([data, data], [1, -1]).toarray()
+            phase_zpf * diags(
+                [np.sqrt(np.arange(1, dimension))] * 2,
+                [1, -1],
+            ).toarray()
         )
         expected += -josephson_energy * (
             suppression_factors[branch_index]
-            * cosm(phi_operator + external_phases[branch_index] * identity)
+            * cosine_fock_product_matrix(
+                (dimension,),
+                (phase_zpf,),
+                external_phases[branch_index],
+            )
             + 0.5 * phi_operator @ phi_operator
         )
 
@@ -698,7 +703,7 @@ def test_selected_mode_indices_accepts_common_integer_sequences():
     assert bbq.selected_mode_indices == [1]
 
 
-def test_hamiltonian_nonlinear_matches_manual_matrix_cosine():
+def test_hamiltonian_nonlinear_matches_exact_fock_cosine():
     capacitance_matrix = np.array([[2.0, 0.2], [0.2, 1.5]]) * 1e-15
     inverse_inductance_matrix = np.array([[4.0, -1.0], [-1.0, 3.0]]) * 1e9
     josephson_energy = 1.3
@@ -718,10 +723,14 @@ def test_hamiltonian_nonlinear_matches_manual_matrix_cosine():
         bbq.branch_phase_zpfs[0, 0]
         * diags([data, data], [1, -1]).toarray()
     )
-    identity = np.eye(dimension)
+    phase_zpf = bbq.branch_phase_zpfs[0, 0]
     expected = -josephson_energy * (
         bbq.josephson_suppression_factors[0]
-        * cosm(phi_operator + external_phase * identity)
+        * cosine_fock_product_matrix(
+            (dimension,),
+            (phase_zpf,),
+            external_phase,
+        )
         + 0.5 * phi_operator @ phi_operator
     )
 
@@ -732,6 +741,40 @@ def test_hamiltonian_nonlinear_matches_manual_matrix_cosine():
         ),
         expected,
     )
+
+
+def test_hamiltonian_nonlinear_uses_exact_multimode_fock_projection():
+    capacitance_matrix = np.array([[2.0, 0.2], [0.2, 1.5]]) * 1e-15
+    inverse_inductance_matrix = np.array([[4.0, -1.0], [-1.0, 3.0]]) * 1e9
+    dimensions = (3, 4)
+    josephson_energy = 1.3
+    external_phase = 0.27
+
+    bbq = BBQ(
+        capacitance_matrix,
+        inverse_inductance_matrix,
+        nonlinear_branches=(0, 1),
+    )
+    bbq.selected_mode_indices = [0, 1]
+    bbq.truncation_dimensions = dimensions
+
+    phase_coefficients = bbq.branch_phase_zpfs[0, [0, 1]]
+    phase_operator = bbq._branch_phase_operator(0)
+    expected = -josephson_energy * (
+        cosine_fock_product_matrix(
+            dimensions,
+            phase_coefficients,
+            external_phase,
+        )
+        + 0.5 * phase_operator @ phase_operator
+    )
+
+    actual = bbq.hamiltonian_nonlinear(
+        josephson_energies=josephson_energy,
+        external_phases=external_phase,
+    )
+
+    assert np.allclose(actual, expected)
 
 
 def test_hamiltonian_nonlinear_scalar_external_phase_matches_one_value_list():

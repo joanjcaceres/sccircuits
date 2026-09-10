@@ -168,7 +168,7 @@ Check the pip package path with:
 ```bash
 python -m build
 python -m twine check dist/*
-python -m pip install dist/sccircuits-0.1.0-py3-none-any.whl
+python -m pip install dist/sccircuits-*.whl
 python -m pip check
 python tests/pip_smoke.py
 ```

@@ -17,13 +17,18 @@ Utilities:
     IterativeHamiltonianDiagonalizer: Multi-mode Hamiltonian diagonalization
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "Joan Caceres"
 __email__ = "contact@joancaceres.com"
 
 # Core circuit analysis classes
 from .circuit import Circuit
 from .bbq import BBQ
+from .fock import (
+    cosine_fock_matrix,
+    cosine_fock_matrix_derivative,
+    cosine_fock_product_matrix,
+)
 
 # Fitting and analysis tools
 from .transition_fitter import TransitionFitter
@@ -39,6 +44,9 @@ __all__ = [
     # Core classes
     "Circuit",
     "BBQ",
+    "cosine_fock_matrix",
+    "cosine_fock_matrix_derivative",
+    "cosine_fock_product_matrix",
     # Analysis tools
     "TransitionFitter",
     "PointPicker",

@@ -3,7 +3,8 @@ from typing import Optional, Sequence, Union
 
 # --- SciPy imports (dense & sparse) ---
 from scipy.sparse import diags
-from scipy.linalg import cosm, sinm, null_space, eigh
+from scipy.linalg import null_space, eigh
+from .fock import cosine_fock_matrix, cosine_fock_matrix_derivative
 from sccircuits.utilities import lanczos_krylov
 from sccircuits.iterative_diagonalizer import IterativeHamiltonianDiagonalizer
 
@@ -426,27 +427,33 @@ class Circuit:
         freq_0 = self.non_linear_frequency
         phi_zpf_0 = self.non_linear_phase_zpf
 
-        # Construct the bosonic Hamiltonian using a diagonal matrix for efficiency (avoids dense matrix operations).
+        # Construct the bosonic Hamiltonian using its diagonal Fock representation.
         diagonal = freq_0 * (np.arange(dimension_bosonic) + 1 / 2)
-        hamiltonian = diags(diagonal, 0)
+        hamiltonian = np.diag(diagonal)
 
         data = np.sqrt(np.arange(1, dimension_bosonic))
-        phi_op = phi_zpf_0 * diags([data, data], [1, -1]).toarray()
-        gauge_invariant_phase_op = phi_op + phase_ext * np.eye(dimension_bosonic)
-        # Calculate the nonlinear potential contributions. Keep phi_shift handy because
-        # it is reused by multiple harmonic terms when present.
-        cos_phi = cosm(gauge_invariant_phase_op)
+        cos_phi = cosine_fock_matrix(
+            dimension_bosonic,
+            phi_zpf_0,
+            phase_ext,
+        )
         hamiltonian -= self.Ej * cos_phi
 
         if self.Ej_second != 0.0:
-            cos_2phi = cosm(2.0 * gauge_invariant_phase_op)
+            cos_2phi = cosine_fock_matrix(
+                dimension_bosonic,
+                2.0 * phi_zpf_0,
+                2.0 * phase_ext,
+            )
             hamiltonian -= self.Ej_second * cos_2phi
 
         if return_coupling_ops:
             if self.has_fermionic_coupling:
-                cos_half_op = cosm(
-                    gauge_invariant_phase_op / 2
-                )  # For fermionic coupling (includes phase_ext)
+                cos_half_op = cosine_fock_matrix(
+                    dimension_bosonic,
+                    phi_zpf_0 / 2.0,
+                    phase_ext / 2.0,
+                )
             else:
                 cos_half_op = None
 
@@ -455,6 +462,37 @@ class Circuit:
             return hamiltonian, cos_half_op, collective_creation_operator
 
         return hamiltonian
+
+    def _nonlinear_gradient_operators(self, phase_ext: float) -> dict[str, np.ndarray]:
+        """Return exact single-mode Fock operators for nonlinear gradients."""
+        dimension = self.dimensions[0]
+        phase_zpf = self.non_linear_phase_zpf
+        cos_phi = cosine_fock_matrix(dimension, phase_zpf, phase_ext)
+        cos_2phi = cosine_fock_matrix(
+            dimension,
+            2.0 * phase_zpf,
+            2.0 * phase_ext,
+        )
+        phase_derivative = (
+            -self.Ej
+            * cosine_fock_matrix_derivative(
+                dimension,
+                phase_zpf,
+                phase_ext,
+            )
+            - 2.0
+            * self.Ej_second
+            * cosine_fock_matrix_derivative(
+                dimension,
+                2.0 * phase_zpf,
+                2.0 * phase_ext,
+            )
+        )
+        return {
+            "dH_dnon_linear_phase_zpf": phase_derivative,
+            "dH_dEj": -cos_phi,
+            "dH_dEj_second": -cos_2phi,
+        }
 
     def _fermionic_hamiltonian(self) -> np.ndarray:
         """
@@ -494,6 +532,7 @@ class Circuit:
         - Works correctly with fermionic modes (2×2) and bosonic modes of any size
         """
         iterator = IterativeHamiltonianDiagonalizer(truncation)
+        resolved_phase_ext = self.phase_ext if phase_ext is None else phase_ext
 
         if self.has_fermionic_coupling:
             # Step 1: Add initial fermionic mode
@@ -522,11 +561,13 @@ class Circuit:
             collective_annihilation_operator = collective_creation_operator.conj().T
             next_coupling_op = collective_creation_operator if self.modes > 1 else None
 
-            tracked_mode0 = (
-                {"a_mode0": collective_annihilation_operator}
-                if track_operators
-                else None
-            )
+            if track_operators:
+                tracked_mode0 = {"a_mode0": collective_annihilation_operator}
+                tracked_mode0.update(
+                    self._nonlinear_gradient_operators(resolved_phase_ext)
+                )
+            else:
+                tracked_mode0 = None
             iterator.add_mode(
                 hamiltonian_nl,
                 cos_half_op,  # Couples to fermionic c†
@@ -582,11 +623,13 @@ class Circuit:
             )
             collective_annihilation_operator = collective_creation_operator.conj().T
 
-            tracked_mode0 = (
-                {"a_mode0": collective_annihilation_operator}
-                if track_operators
-                else None
-            )
+            if track_operators:
+                tracked_mode0 = {"a_mode0": collective_annihilation_operator}
+                tracked_mode0.update(
+                    self._nonlinear_gradient_operators(resolved_phase_ext)
+                )
+            else:
+                tracked_mode0 = None
             iterator.add_initial_mode(
                 hamiltonian_0,
                 initial_coupling_op,
@@ -984,8 +1027,6 @@ class Circuit:
 
         tracked_ops = self.get_tracked_operators()
         num_states = self._last_diagonalizer.energies.shape[0]
-        identity = np.eye(num_states, dtype=np.complex128)
-
         columns: list[np.ndarray] = []
         names: list[str] = []
 
@@ -995,26 +1036,20 @@ class Circuit:
         number0 = adag0 @ a0
 
         names.append("non_linear_frequency")
-        columns.append(np.real(np.diag(number0 + 0.5 * identity)))
-
-        phi_op = self.non_linear_phase_zpf * (a0 + adag0)
-        phi_shift = phi_op + phase_ext * identity
-        cos_phi = cosm(phi_shift)
-        sin_phi = sinm(phi_shift)
-        cos_2phi = cosm(2.0 * phi_shift)
-        sin_2phi = sinm(2.0 * phi_shift)
-        ann_sum = a0 + adag0
+        columns.append(
+            np.real(np.diag(number0)) + 0.5 * np.ones(num_states)
+        )
 
         names.append("non_linear_phase_zpf")
-        dH_dphi = self.Ej * (sin_phi @ ann_sum)
-        dH_dphi += 2.0 * self.Ej_second * (sin_2phi @ ann_sum)
-        columns.append(np.real(np.diag(dH_dphi)))
+        columns.append(
+            np.real(np.diag(tracked_ops["dH_dnon_linear_phase_zpf"]))
+        )
 
         names.append("Ej")
-        columns.append(np.real(np.diag(-cos_phi)))
+        columns.append(np.real(np.diag(tracked_ops["dH_dEj"])))
 
         names.append("Ej_second")
-        columns.append(np.real(np.diag(-cos_2phi)))
+        columns.append(np.real(np.diag(tracked_ops["dH_dEj_second"])))
 
         # Linear mode frequencies
         for idx in range(len(self.linear_frequencies)):
@@ -1023,7 +1058,9 @@ class Circuit:
             adag_k = a_k.conj().T
             number_k = adag_k @ a_k
             names.append(f"linear_frequency_{idx}")
-            columns.append(np.real(np.diag(number_k + 0.5 * identity)))
+            columns.append(
+                np.real(np.diag(number_k)) + 0.5 * np.ones(num_states)
+            )
 
         # Linear mode couplings
         for idx in range(len(self.linear_coupling)):
