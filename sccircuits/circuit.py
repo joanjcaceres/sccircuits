@@ -4,7 +4,7 @@ from typing import Optional, Sequence, Union
 # --- SciPy imports (dense & sparse) ---
 from scipy.sparse import diags
 from scipy.linalg import null_space, eigh
-from sccircuits.fock import cosine_fock_matrix, cosine_fock_matrix_derivative
+from .fock import cosine_fock_matrix, cosine_fock_matrix_derivative
 from sccircuits.utilities import lanczos_krylov
 from sccircuits.iterative_diagonalizer import IterativeHamiltonianDiagonalizer
 

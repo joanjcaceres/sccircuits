@@ -17,7 +17,7 @@ Utilities:
     IterativeHamiltonianDiagonalizer: Multi-mode Hamiltonian diagonalization
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "Joan Caceres"
 __email__ = "contact@joancaceres.com"
 

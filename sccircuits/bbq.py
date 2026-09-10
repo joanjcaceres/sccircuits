@@ -13,7 +13,7 @@ from scipy.constants import e, hbar  # type: ignore[import-untyped]
 from scipy.linalg import eigh, solve  # type: ignore[import-untyped]
 from scipy.sparse import diags  # type: ignore[import-untyped]
 
-from sccircuits.fock import cosine_fock_product_matrix
+from .fock import cosine_fock_product_matrix
 
 
 FloatArray = NDArray[np.float64]
