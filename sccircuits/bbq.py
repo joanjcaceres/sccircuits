@@ -10,8 +10,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
 from scipy.constants import e, hbar  # type: ignore[import-untyped]
-from scipy.linalg import cosm, eigh, solve  # type: ignore[import-untyped]
+from scipy.linalg import eigh, solve  # type: ignore[import-untyped]
 from scipy.sparse import diags  # type: ignore[import-untyped]
+
+from sccircuits.fock import cosine_fock_product_matrix
 
 
 FloatArray = NDArray[np.float64]
@@ -1414,18 +1416,18 @@ class BBQ:
                 self._total_truncation_dimension,
             )
         )
-        identity = np.eye(self._total_truncation_dimension)
-
         for branch_index, josephson_energy in enumerate(
             josephson_energy_values
         ):
             phi_branch = self._branch_phase_operator(branch_index)
-            cos_term = np.asarray(
-                cosm(
-                    phi_branch
-                    + external_phase_values[branch_index] * identity
-                ),
-                dtype=float,
+            selected_phase_zpfs = self.branch_phase_zpfs[
+                branch_index,
+                self.selected_mode_indices,
+            ]
+            cos_term = cosine_fock_product_matrix(
+                self.truncation_dimensions,
+                selected_phase_zpfs,
+                external_phase_values[branch_index],
             )
             hamiltonian_nonlinear += -josephson_energy * (
                 suppression_factors[branch_index] * cos_term
