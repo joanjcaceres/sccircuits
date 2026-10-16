@@ -87,8 +87,14 @@ For local editable development without Pixi:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+python scripts/install_pointpicker_candidate.py
 python -m pip install -e ".[dev,interactive,docs]"
 ```
+
+The PointPicker extraction branch temporarily installs a fixed GitHub candidate
+for development and CI. SCCircuits still declares a normal version dependency;
+the migration PR remains a draft until `mpl-pointpicker` is published to PyPI.
+See [issue #83](https://github.com/joanjcaceres/sccircuits/issues/83).
 
 ### Performance Baseline
 
@@ -151,7 +157,7 @@ branches.
 - `sccircuits.BBQ`: black-box quantization from capacitance and inverse-inductance matrices.
 - `sccircuits.Circuit`: dense superconducting-circuit Hamiltonian construction and diagonalization.
 - `sccircuits.TransitionFitter`: transition-frequency fitting utilities.
-- `sccircuits.PointPicker`: interactive point selection for data analysis.
+- `sccircuits.PointPicker`: compatibility import for [`mpl-pointpicker`](https://github.com/joanjcaceres/mpl-pointpicker), the independent point-selection and image-digitization package.
 
 ## Development
 

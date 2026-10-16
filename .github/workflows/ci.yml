@@ -57,6 +57,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      # Temporary development/CI source; the published dependency remains a version range.
+      # Remove after mpl-pointpicker 0.1.0 reaches PyPI (issue #83).
+      - name: Install PointPicker candidate
+        run: python scripts/install_pointpicker_candidate.py
+
       - name: Install base package
         run: |
           python -m pip install --upgrade pip
@@ -92,6 +97,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+
+      - name: Install PointPicker candidate
+        run: python scripts/install_pointpicker_candidate.py
 
       - name: Install base package
         run: |

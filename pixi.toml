@@ -31,9 +31,10 @@ liblapack = { version = ">=3.9.0,<4", build = "*accelerate" }
 liblapacke = { version = ">=3.9.0,<4", build = "*accelerate" }
 
 [tasks]
-install = "python -m pip --cache-dir .pixi/pip-cache install --no-deps --no-build-isolation -e ."
-install-dev = "python -m pip --cache-dir .pixi/pip-cache install --no-deps --no-build-isolation -e ."
-test = "pytest tests/ -v"
+pointpicker-candidate = "python scripts/install_pointpicker_candidate.py"
+install = {cmd = "python -m pip --cache-dir .pixi/pip-cache install --no-deps --no-build-isolation -e .", depends-on = ["pointpicker-candidate"]}
+install-dev = {cmd = "python -m pip --cache-dir .pixi/pip-cache install --no-deps --no-build-isolation -e .", depends-on = ["pointpicker-candidate"]}
+test = {cmd = "pytest tests/ -v", depends-on = ["pointpicker-candidate"]}
 coverage = "pytest tests/ --cov=sccircuits --cov-report=html"
 format = "ruff format sccircuits/ tests/"
 lint = "ruff check sccircuits/ tests/"
