@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 
-CANDIDATE_REVISION = "8d21ef2f388365791e82e9b1cc6fe4de56bc8d66"
+CANDIDATE_REVISION = "9142ffc09123a9e9fe6e191180029bc226456d4f"
 CANDIDATE_URL = (
     "https://github.com/joanjcaceres/mpl-pointpicker/archive/"
     f"{CANDIDATE_REVISION}.tar.gz"
