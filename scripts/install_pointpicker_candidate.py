@@ -5,6 +5,8 @@ after the publication prerequisite recorded in SCCircuits issue #83 is met.
 """
 
 from pathlib import Path
+from importlib.metadata import PackageNotFoundError, distribution
+import json
 import subprocess
 import sys
 
@@ -16,7 +18,15 @@ CANDIDATE_URL = (
 )
 
 
-if __name__ == "__main__":
+def main():
+    try:
+        installed = distribution("mpl-pointpicker")
+        origin = json.loads(installed.read_text("direct_url.json") or "{}")
+        if origin.get("url") == CANDIDATE_URL:
+            print(f"PointPicker candidate already installed: {CANDIDATE_REVISION}")
+            return
+    except (PackageNotFoundError, json.JSONDecodeError):
+        pass
     cache = Path(__file__).resolve().parents[1] / ".pixi" / "pip-cache"
     subprocess.run(
         [
@@ -28,7 +38,12 @@ if __name__ == "__main__":
             "--cache-dir",
             str(cache),
             "--no-deps",
+            "--force-reinstall",
             f"mpl-pointpicker @ {CANDIDATE_URL}",
         ],
         check=True,
     )
+
+
+if __name__ == "__main__":
+    main()
