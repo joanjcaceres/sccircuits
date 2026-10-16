@@ -90,6 +90,10 @@ source .venv/bin/activate
 python -m pip install -e ".[dev,interactive,docs]"
 ```
 
+PointPicker is installed from [PyPI](https://pypi.org/project/mpl-pointpicker/)
+as a regular dependency. Pixi also locks its notebook extra for local interactive
+development. See [issue #83](https://github.com/joanjcaceres/sccircuits/issues/83).
+
 ### Performance Baseline
 
 SCCircuits relies on NumPy and SciPy wheels for cross-platform BLAS/LAPACK
@@ -151,7 +155,7 @@ branches.
 - `sccircuits.BBQ`: black-box quantization from capacitance and inverse-inductance matrices.
 - `sccircuits.Circuit`: dense superconducting-circuit Hamiltonian construction and diagonalization.
 - `sccircuits.TransitionFitter`: transition-frequency fitting utilities.
-- `sccircuits.PointPicker`: interactive point selection for data analysis.
+- `sccircuits.PointPicker`: compatibility import for [`mpl-pointpicker`](https://github.com/joanjcaceres/mpl-pointpicker), the independent point-selection and image-digitization package.
 
 ## Development
 

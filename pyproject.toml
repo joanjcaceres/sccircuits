@@ -30,10 +30,12 @@ dependencies = [
     "matplotlib>=3.10,<4",
     "sympy>=1.13,<2",
     "PyYAML>=6,<7",
+    "mpl-pointpicker>=0.1.0,<0.2",
 ]
 
 [project.optional-dependencies]
 interactive = [
+    "mpl-pointpicker[notebook]>=0.1.0,<0.2",
     "ipywidgets>=8.1,<9",
     "IPython>=9,<10"
 ]

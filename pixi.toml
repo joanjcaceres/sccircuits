@@ -24,6 +24,9 @@ mkdocs = ">=1.6,<2"
 mkdocs-material = ">=9.5,<10"
 pymdown-extensions = ">=10.8,<11"
 
+[pypi-dependencies]
+mpl-pointpicker = { version = ">=0.1.0,<0.2", extras = ["notebook"] }
+
 [target.osx-arm64.dependencies]
 libblas = { version = ">=3.9.0,<4", build = "*accelerate" }
 libcblas = { version = ">=3.9.0,<4", build = "*accelerate" }
